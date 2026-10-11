@@ -1,0 +1,547 @@
+
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#111827">
+<title>Eng. CAD Studio</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#111827;color:#f9fafb}
+header{padding:13px;background:#0b1220;border-bottom:1px solid #374151}
+h2{margin:0;font-size:21px}
+#status{font-size:12px;color:#a7f3d0;margin-top:5px}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px;padding:9px;background:#1f2937}
+button,.filebtn{background:#374151;color:white;border:1px solid #4b5563;border-radius:7px;padding:10px 12px;font-size:13px;cursor:pointer}
+button.active{background:#047857;border-color:#34d399}
+button:active{opacity:.7}
+#workspace{height:calc(100dvh - 210px);min-height:300px;position:relative;background:#fff}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+#bottom{padding:9px;background:#0b1220;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;color:#d1d5db}
+input[type=file]{display:none}
+.small{font-size:11px;color:#9ca3af}
+</style>
+</head>
+<body>
+<header>
+  <h2>Eng. CAD Studio</h2>
+  <div id="status">Ready • 2D CAD • Offline drawing</div>
+</header>
+
+<div class="toolbar" id="tools">
+  <button class="active" data-tool="select">Select / Move</button>
+  <button data-tool="wall">Wall</button>
+  <button data-tool="line">Line</button>
+  <button data-tool="rect">Rectangle</button>
+  <button data-tool="circle">Circle</button>
+  <button data-tool="erase">Erase</button>
+</div>
+
+<div class="toolbar">
+  <button id="undo">↶ Undo</button>
+  <button id="redo">↷ Redo</button>
+  <button id="del">Delete</button>
+  <button id="grid" class="active">Grid: ON</button>
+  <button id="snap" class="active">Snap: ON</button>
+  <button id="zoomOut">− Zoom</button>
+  <button id="zoomIn">+ Zoom</button>
+  <button id="fit">Fit</button>
+</div>
+
+<div class="toolbar">
+  <button id="save">Save JSON</button>
+  <button id="loadBtn">Open JSON</button>
+  <input type="file" id="loadFile" accept=".json,application/json">
+  <button id="png">Export PNG</button>
+  <button id="clear">Clear All</button>
+</div>
+
+<div id="workspace">
+  <canvas id="canvas"></canvas>
+</div>
+
+<div id="bottom">
+  <span id="coords">X: 0 | Y: 0</span>
+  <span id="count">Objects: 0</span>
+  <span class="small">Drawing units: grid units</span>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const status = document.getElementById("status");
+const coords = document.getElementById("coords");
+const count = document.getElementById("count");
+
+let objects = [];
+let history = [];
+let future = [];
+let selected = -1;
+let tool = "select";
+let showGrid = true;
+let snapOn = true;
+let zoom = 1;
+let panX = 0;
+let panY = 0;
+let start = null;
+let preview = null;
+let dragging = false;
+let moved = false;
+let dragOffset = null;
+let lastPointer = null;
+const gridSize = 20;
+
+function setStatus(s){status.textContent=s;}
+
+function resize(){
+  const r = canvas.getBoundingClientRect();
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = Math.round(r.width*dpr);
+  canvas.height = Math.round(r.height*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  draw();
+}
+window.addEventListener("resize",resize);
+
+function screenToWorld(x,y){
+  return {x:(x-panX)/zoom,y:(y-panY)/zoom};
+}
+function worldToScreen(x,y){
+  return {x:x*zoom+panX,y:y*zoom+panY};
+}
+function snapPoint(p){
+  if(!snapOn) return p;
+  return {
+    x:Math.round(p.x/gridSize)*gridSize,
+    y:Math.round(p.y/gridSize)*gridSize
+  };
+}
+function pointerPos(e){
+  const r=canvas.getBoundingClientRect();
+  return {x:e.clientX-r.left,y:e.clientY-r.top};
+}
+function saveHistory(){
+  history.push(JSON.stringify(objects));
+  if(history.length>60) history.shift();
+  future=[];
+}
+function restoreState(str){
+  try{
+    objects=JSON.parse(str);
+    selected=-1;
+    preview=null;
+    draw();
+  }catch(e){setStatus("Could not restore drawing");}
+}
+function undo(){
+  if(!history.length)return;
+  future.push(JSON.stringify(objects));
+  restoreState(history.pop());
+  setStatus("Undo completed");
+}
+function redo(){
+  if(!future.length)return;
+  history.push(JSON.stringify(objects));
+  restoreState(future.pop());
+  setStatus("Redo completed");
+}
+function addObject(o){
+  saveHistory();
+  objects.push(o);
+  selected=objects.length-1;
+  draw();
+}
+function normalizeRect(a,b){
+  return {x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),
+          w:Math.abs(b.x-a.x),h:Math.abs(b.y-a.y)};
+}
+function makeObject(a,b,type){
+  if(type==="line" || type==="wall"){
+    return {type,x1:a.x,y1:a.y,x2:b.x,y2:b.y};
+  }
+  if(type==="rect"){
+    return {type,...normalizeRect(a,b)};
+  }
+  if(type==="circle"){
+    return {type,cx:a.x,cy:a.y,
+      r:Math.hypot(b.x-a.x,b.y-a.y)};
+  }
+  return null;
+}
+
+function drawGrid(w,h){
+  if(!showGrid)return;
+  const left=(-panX)/zoom;
+  const top=(-panY)/zoom;
+  const right=(w-panX)/zoom;
+  const bottom=(h-panY)/zoom;
+  let step=gridSize;
+  while(step*zoom<8)step*=2;
+  ctx.beginPath();
+  ctx.strokeStyle="#e5e7eb";
+  ctx.lineWidth=1;
+  for(let x=Math.floor(left/step)*step;x<right;x+=step){
+    const sx=worldToScreen(x,0).x;
+    ctx.moveTo(sx,0);ctx.lineTo(sx,h);
+  }
+  for(let y=Math.floor(top/step)*step;y<bottom;y+=step){
+    const sy=worldToScreen(0,y).y;
+    ctx.moveTo(0,sy);ctx.lineTo(w,sy);
+  }
+  ctx.stroke();
+  // Major grid
+  ctx.beginPath();
+  ctx.strokeStyle="#cbd5e1";
+  const major=step*5;
+  for(let x=Math.floor(left/major)*major;x<right;x+=major){
+    const sx=worldToScreen(x,0).x;
+    ctx.moveTo(sx,0);ctx.lineTo(sx,h);
+  }
+  for(let y=Math.floor(top/major)*major;y<bottom;y+=major){
+    const sy=worldToScreen(0,y).y;
+    ctx.moveTo(0,sy);ctx.lineTo(w,sy);
+  }
+  ctx.stroke();
+}
+
+function drawObject(o,index){
+  ctx.save();
+  ctx.strokeStyle=index===selected?"#dc2626":"#111827";
+  ctx.lineWidth=(o.type==="wall"?5:2)/zoom;
+  ctx.lineCap="round";
+  ctx.lineJoin="round";
+  if(o.type==="line"||o.type==="wall"){
+    ctx.beginPath();
+    ctx.moveTo(o.x1,o.y1);
+    ctx.lineTo(o.x2,o.y2);
+    ctx.stroke();
+  }else if(o.type==="rect"){
+    ctx.strokeRect(o.x,o.y,o.w,o.h);
+  }else if(o.type==="circle"){
+    ctx.beginPath();
+    ctx.arc(o.cx,o.cy,o.r,0,Math.PI*2);
+    ctx.stroke();
+  }
+  if(index===selected){
+    const pts=getPoints(o);
+    ctx.fillStyle="#2563eb";
+    for(const p of pts){
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,4/zoom,0,Math.PI*2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+function getPoints(o){
+  if(o.type==="line"||o.type==="wall")
+    return [{x:o.x1,y:o.y1},{x:o.x2,y:o.y2}];
+  if(o.type==="rect")
+    return [{x:o.x,y:o.y},{x:o.x+o.w,y:o.y+o.h}];
+  if(o.type==="circle")
+    return [{x:o.cx,y:o.cy},{x:o.cx+o.r,y:o.cy}];
+  return [];
+}
+function draw(){
+  const r=canvas.getBoundingClientRect();
+  const w=r.width,h=r.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle="#ffffff";ctx.fillRect(0,0,w,h);
+  drawGrid(w,h);
+  ctx.save();
+  ctx.translate(panX,panY);
+  ctx.scale(zoom,zoom);
+  objects.forEach(drawObject);
+  if(preview){
+    ctx.strokeStyle="#059669";
+    ctx.setLineDash([5/zoom,4/zoom]);
+    ctx.lineWidth=2/zoom;
+    if(preview.type==="line"||preview.type==="wall"){
+      ctx.beginPath();ctx.moveTo(preview.x1,preview.y1);
+      ctx.lineTo(preview.x2,preview.y2);ctx.stroke();
+    }else if(preview.type==="rect"){
+      ctx.strokeRect(preview.x,preview.y,preview.w,preview.h);
+    }else if(preview.type==="circle"){
+      ctx.beginPath();ctx.arc(preview.cx,preview.cy,preview.r,0,Math.PI*2);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+  count.textContent="Objects: "+objects.length;
+}
+function distToSegment(p,a,b){
+  const dx=b.x-a.x,dy=b.y-a.y;
+  const len=dx*dx+dy*dy;
+  if(!len)return Math.hypot(p.x-a.x,p.y-a.y);
+  const t=Math.max(0,Math.min(1,
+    ((p.x-a.x)*dx+(p.y-a.y)*dy)/len));
+  return Math.hypot(p.x-(a.x+t*dx),p.y-(a.y+t*dy));
+}
+function hitTest(p,o){
+  const tol=10/zoom;
+  if(o.type==="line"||o.type==="wall"){
+    return distToSegment(p,{x:o.x1,y:o.y1},{x:o.x2,y:o.y2})<tol;
+  }
+  if(o.type==="rect"){
+    const nearX=p.x>=o.x-tol&&p.x<=o.x+o.w+tol;
+    const nearY=p.y>=o.y-tol&&p.y<=o.y+o.h+tol;
+    if(!(nearX&&nearY))return false;
+    return Math.min(
+      Math.abs(p.x-o.x),Math.abs(p.x-o.x-o.w),
+      Math.abs(p.y-o.y),Math.abs(p.y-o.y-o.h)
+    )<tol;
+  }
+  if(o.type==="circle"){
+    return Math.abs(Math.hypot(p.x-o.cx,p.y-o.cy)-o.r)<tol;
+  }
+  return false;
+}
+function findObject(p){
+  for(let i=objects.length-1;i>=0;i--){
+    if(hitTest(p,objects[i]))return i;
+  }
+  return -1;
+}
+function moveObject(o,dx,dy){
+  if(o.type==="line"||o.type==="wall"){
+    o.x1+=dx;o.x2+=dx;o.y1+=dy;o.y2+=dy;
+  }else if(o.type==="rect"){
+    o.x+=dx;o.y+=dy;
+  }else if(o.type==="circle"){
+    o.cx+=dx;o.cy+=dy;
+  }
+}
+
+canvas.addEventListener("pointerdown",function(e){
+  e.preventDefault();
+  canvas.setPointerCapture(e.pointerId);
+  const sp=pointerPos(e);
+  lastPointer=sp;
+  const raw=screenToWorld(sp.x,sp.y);
+  const p=snapPoint(raw);
+  start=p;
+  moved=false;
+  dragging=true;
+
+  if(tool==="select"){
+    const hit=findObject(p);
+    selected=hit;
+    if(hit>=0){
+      saveHistory();
+      dragOffset={x:p.x,y:p.y};
+      setStatus("Object selected — drag to move");
+    }else{
+      dragOffset=null;
+      setStatus("Select an object");
+    }
+    draw();
+  }else if(tool==="erase"){
+    const hit=findObject(p);
+    if(hit>=0){
+      saveHistory();
+      objects.splice(hit,1);
+      selected=-1;
+      draw();
+      setStatus("Object erased");
+    }
+    dragging=false;
+  }else{
+    preview=makeObject(p,p,tool);
+  }
+});
+
+canvas.addEventListener("pointermove",function(e){
+  const sp=pointerPos(e);
+  const raw=screenToWorld(sp.x,sp.y);
+  const p=snapPoint(raw);
+  coords.textContent="X: "+Math.round(raw.x)+" | Y: "+Math.round(raw.y);
+
+  if(!dragging){
+    return;
+  }
+  if(start&&Math.hypot(sp.x-lastPointer.x,sp.y-lastPointer.y)>2)
+    moved=true;
+
+  if(tool==="select"&&selected>=0&&dragOffset){
+    const o=objects[selected];
+    const dx=p.x-dragOffset.x,dy=p.y-dragOffset.y;
+    moveObject(o,dx,dy);
+    dragOffset=p;
+    draw();
+  }else if(preview&&start){
+    preview=makeObject(start,p,tool);
+    draw();
+  }
+  lastPointer=sp;
+});
+
+canvas.addEventListener("pointerup",function(e){
+  if(!dragging)return;
+  dragging=false;
+  const sp=pointerPos(e);
+  const p=snapPoint(screenToWorld(sp.x,sp.y));
+
+  if(tool!=="select"&&tool!=="erase"&&preview&&start){
+    const o=makeObject(start,p,tool);
+    let valid=false;
+    if(o.type==="line"||o.type==="wall")
+      valid=Math.hypot(o.x2-o.x1,o.y2-o.y1)>1;
+    else if(o.type==="rect")
+      valid=o.w>1&&o.h>1;
+    else if(o.type==="circle")
+      valid=o.r>1;
+    if(valid){
+      addObject(o);
+      setStatus("Drawing created");
+    }
+  }
+  preview=null;start=null;dragOffset=null;
+  draw();
+});
+canvas.addEventListener("pointercancel",function(){
+  dragging=false;preview=null;start=null;dragOffset=null;draw();
+});
+
+document.querySelectorAll("[data-tool]").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    tool=btn.dataset.tool;
+    document.querySelectorAll("[data-tool]").forEach(b=>
+      b.classList.toggle("active",b===btn));
+    setStatus("Tool: "+btn.textContent);
+    preview=null;draw();
+  });
+});
+
+document.getElementById("undo").onclick=undo;
+document.getElementById("redo").onclick=redo;
+
+document.getElementById("del").onclick=function(){
+  if(selected<0||selected>=objects.length){
+    setStatus("Select an object first");return;
+  }
+  saveHistory();objects.splice(selected,1);selected=-1;
+  draw();setStatus("Object deleted");
+};
+
+document.getElementById("clear").onclick=function(){
+  if(!objects.length)return;
+  if(confirm("Delete all drawing objects?")){
+    saveHistory();objects=[];selected=-1;draw();
+    setStatus("Drawing cleared");
+  }
+};
+
+document.getElementById("grid").onclick=function(){
+  showGrid=!showGrid;
+  this.classList.toggle("active",showGrid);
+  this.textContent="Grid: "+(showGrid?"ON":"OFF");
+  draw();
+};
+document.getElementById("snap").onclick=function(){
+  snapOn=!snapOn;
+  this.classList.toggle("active",snapOn);
+  this.textContent="Snap: "+(snapOn?"ON":"OFF");
+};
+document.getElementById("zoomIn").onclick=function(){
+  zoom=Math.min(zoom*1.2,5);draw();
+};
+document.getElementById("zoomOut").onclick=function(){
+  zoom=Math.max(zoom/1.2,.2);draw();
+};
+document.getElementById("fit").onclick=function(){
+  zoom=1;panX=0;panY=0;draw();
+};
+
+document.getElementById("save").onclick=function(){
+  const data={
+    app:"Eng. CAD Studio",
+    version:1,
+    gridSize,
+    objects
+  };
+  const blob=new Blob([JSON.stringify(data,null,2)],
+    {type:"application/json"});
+  downloadBlob(blob,"eng-cad-drawing.json");
+  setStatus("JSON saved");
+};
+document.getElementById("loadBtn").onclick=function(){
+  document.getElementById("loadFile").click();
+};
+document.getElementById("loadFile").onchange=async function(e){
+  const file=e.target.files[0];
+  if(!file)return;
+  try{
+    const data=JSON.parse(await file.text());
+    const arr=Array.isArray(data)?data:data.objects;
+    if(!Array.isArray(arr))throw new Error("Invalid drawing");
+    if(!arr.every(o=>o&&["line","wall","rect","circle"].includes(o.type)))
+      throw new Error("Unsupported object");
+    saveHistory();
+    objects=arr;selected=-1;draw();
+    setStatus("Drawing opened");
+  }catch(err){
+    alert("JSON file could not be opened.");
+  }
+  e.target.value="";
+};
+document.getElementById("png").onclick=function(){
+  const r=canvas.getBoundingClientRect();
+  const out=document.createElement("canvas");
+  const scale=2;
+  out.width=Math.round(r.width*scale);
+  out.height=Math.round(r.height*scale);
+  const c=out.getContext("2d");
+  c.scale(scale,scale);
+  c.fillStyle="#fff";c.fillRect(0,0,r.width,r.height);
+  c.save();c.translate(panX,panY);c.scale(zoom,zoom);
+  objects.forEach((o)=>{
+    c.strokeStyle="#111827";
+    c.lineWidth=o.type==="wall"?5:2;
+    c.lineCap="round";
+    if(o.type==="line"||o.type==="wall"){
+      c.beginPath();c.moveTo(o.x1,o.y1);c.lineTo(o.x2,o.y2);c.stroke();
+    }else if(o.type==="rect"){
+      c.strokeRect(o.x,o.y,o.w,o.h);
+    }else if(o.type==="circle"){
+      c.beginPath();c.arc(o.cx,o.cy,o.r,0,Math.PI*2);c.stroke();
+    }
+  });
+  c.restore();
+  out.toBlob(blob=>{
+    if(blob)downloadBlob(blob,"eng-cad-drawing.png");
+  },"image/png");
+  setStatus("PNG export requested");
+};
+
+function downloadBlob(blob,name){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download=name;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+// Keyboard shortcuts on devices with a keyboard
+document.addEventListener("keydown",function(e){
+  if(e.target.matches("input,textarea"))return;
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"){
+    e.preventDefault();undo();
+  }else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="y"){
+    e.preventDefault();redo();
+  }else if(e.key==="Delete"||e.key==="Backspace"){
+    document.getElementById("del").click();
+  }else if(e.key==="Escape"){
+    preview=null;start=null;draw();
+  }
+});
+
+resize();
+setStatus("Ready • Draw using the toolbar");
+})();
+</script>
+</body>
+</html>
