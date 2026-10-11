@@ -1,0 +1,382 @@
+
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#111827">
+<title>Eng. CAD Studio Prime</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#101827;color:#edf4ff;font:14px system-ui,Arial}
+header{padding:12px;display:flex;gap:10px;align-items:center;justify-content:space-between;background:#0c1422;position:sticky;top:0;z-index:5}
+h1{font-size:17px;margin:0}h1 span{color:#48b5ff}
+button,input,select{font:inherit;color:inherit;background:#22334b;border:1px solid #415572;border-radius:7px;padding:8px}
+button{cursor:pointer}button:hover{border-color:#54b8ff}.blue{background:#1676ce}
+.toolbar{display:flex;gap:6px;flex-wrap:wrap;padding:8px;background:#182438}
+.toolbar button.active{background:#1676ce}
+main{display:grid;grid-template-columns:minmax(0,1fr) 265px;gap:9px;padding:9px}
+.tabs{display:flex;gap:6px;margin-bottom:8px}.tabs button{flex:1}
+.tabs .active{background:#1676ce}
+.stage{height:65vh;min-height:350px;position:relative;background:#080e18;border:1px solid #344862;border-radius:10px;overflow:hidden}
+canvas{width:100%;height:100%;display:block;touch-action:none}
+#threeView{width:100%;height:100%;display:none}
+#hint{position:absolute;bottom:8px;left:8px;font-size:11px;background:#111c2ddd;padding:6px;border-radius:5px;pointer-events:none}
+.panel{background:#182438;border:1px solid #30445f;border-radius:10px;padding:11px;height:max-content}
+h3{font-size:14px;margin:3px 0 10px}
+label{display:block;color:#afc0d6;font-size:12px;margin:9px 0 4px}
+input,select{width:100%;min-width:0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+hr{border:0;border-top:1px solid #30445f;margin:13px 0}
+.small{font-size:11px;color:#a9bad0;line-height:1.55}
+#status{padding:8px;color:#a9bad0;font-size:12px}
+#list{max-height:150px;overflow:auto}
+.listitem{display:flex;justify-content:space-between;gap:5px;padding:6px;border-bottom:1px solid #30445f;font-size:12px}
+@media(max-width:760px){main{grid-template-columns:1fr;padding:6px}.stage{height:52vh;min-height:320px}.panel{display:block}header h1{font-size:14px}}
+</style>
+<script type="importmap">
+{
+  "imports":{
+    "three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<header>
+<h1>🏗️ Eng. <span>CAD Studio Prime</span></h1>
+<div style="display:flex;gap:5px">
+<button id="undo">↶</button><button id="redo">↷</button>
+<button class="blue" id="save">Save</button>
+</div>
+</header>
+
+<div class="toolbar" id="toolbar">
+<button class="active" data-tool="select">Select</button>
+<button data-tool="wall">Wall</button>
+<button data-tool="room">Room</button>
+<button data-tool="door">Door</button>
+<button data-tool="window">Window</button>
+<button data-tool="dimension">Dimension</button>
+<button data-tool="electrical">Electrical</button>
+<button data-tool="plumbing">Plumbing</button>
+<button data-tool="staircase">Staircase</button>
+<button data-tool="furniture">Furniture</button>
+<button data-tool="text">Text</button>
+</div>
+
+<main>
+<section>
+<div class="tabs">
+<button id="tab2" class="active">2D CAD</button>
+<button id="tab3">3D MODEL</button>
+</div>
+<div class="stage">
+<canvas id="cad"></canvas>
+<div id="threeView"></div>
+<div id="hint">Select: অবজেক্ট সরান · Wall/Room: টেনে আঁকুন</div>
+</div>
+<div id="status">Ready</div>
+</section>
+
+<aside class="panel">
+<h3>Object Properties</h3>
+<label>Name</label><input id="name" value="">
+<div class="grid">
+<div><label>X</label><input id="x" type="number" value="0"></div>
+<div><label>Y</label><input id="y" type="number" value="0"></div>
+<div><label>Width</label><input id="w" type="number" value="100"></div>
+<div><label>Depth</label><input id="h" type="number" value="60"></div>
+<div><label>Height (3D)</label><input id="z" type="number" value="30"></div>
+<div><label>Thickness</label><input id="t" type="number" value="5"></div>
+<div><label>Rotation</label><input id="r" type="number" value="0"></div>
+<div><label>Color</label><input id="color" type="color" value="#49aaff"></div>
+</div>
+<button class="blue" id="apply" style="width:100%;margin-top:10px">Apply Changes</button>
+<div class="actions" style="margin-top:7px">
+<button id="clone">Clone</button><button id="rotate">Rotate +15°</button>
+<button id="delete">Delete</button><button id="front">Bring Front</button>
+</div>
+
+<hr><h3>3D Item Library</h3>
+<label>Add a 3D item</label>
+<select id="item">
+<option value="bed">Bed</option><option value="sofa">Sofa</option>
+<option value="table">Table</option><option value="chair">Chair</option>
+<option value="cabinet">Cabinet</option><option value="column">Column</option>
+<option value="car">Car</option><option value="stairs3d">Staircase</option>
+<option value="toilet">Toilet</option><option value="sink">Sink</option>
+</select>
+<button class="blue" id="add3d" style="width:100%;margin-top:7px">＋ Add 3D Item</button>
+
+<hr><h3>Project Files</h3>
+<div class="actions">
+<button id="exportJSON">JSON Export</button><button id="importJSON">JSON Import</button>
+<button id="dxf">DXF Export</button><button id="svg">SVG Export</button>
+<button id="png">PNG Export</button><button id="obj">OBJ Export</button>
+<button id="pdf">Print / PDF</button><button id="sample">Sample Plan</button>
+</div>
+<input id="file" type="file" accept=".json,application/json" hidden>
+
+<hr><h3>Prime Update</h3>
+<label>GitHub Repository URL</label>
+<input id="repo" placeholder="https://github.com/owner/repository">
+<div class="actions" style="margin-top:7px">
+<button id="check">Check Update</button><button id="update" class="blue">Update Now</button>
+</div>
+<div class="small" id="updateInfo">App version: 1.0.0. GitHub Releases থেকে আপডেট পরীক্ষা করুন।</div>
+
+<hr><h3>Object List</h3><div id="list"></div>
+<p class="small">এক ফাইলের CAD prototype। 3D engine ও update checker চালাতে internet প্রয়োজন।</p>
+</aside>
+</main>
+
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+const VERSION='1.0.0';
+const $=id=>document.getElementById(id);
+const canvas=$('cad'),ctx=canvas.getContext('2d');
+let items=[],selected=null,tool='select',view='2d',drag=null;
+let undoStack=[],redoStack=[],zoom=1,pan={x:0,y:0};
+let scene,camera,renderer,controls,modelGroup;
+const defs={
+wall:['Wall',140,8,30,'#b7c7d9'],room:['Room',140,100,1,'#35506d'],
+door:['Door',35,5,21,'#b58b5a'],window:['Window',45,5,15,'#65d9ff'],
+dimension:['Dimension',100,0,1,'#ffd166'],electrical:['Electrical',12,12,3,'#ffd166'],
+plumbing:['Plumbing',12,12,3,'#4de0d0'],staircase:['Staircase',70,110,30,'#b7c7d9'],
+furniture:['Furniture',55,40,15,'#a7a0ff'],text:['Text',80,20,1,'#ffffff'],
+bed:['Bed',80,120,25,'#a8bfdc'],sofa:['Sofa',100,45,35,'#899bb8'],
+table:['Table',70,50,18,'#c49a6c'],chair:['Chair',35,35,16,'#d2ae7c'],
+cabinet:['Cabinet',55,35,45,'#a77e60'],column:['Column',25,25,30,'#c1cddd'],
+car:['Car',90,170,45,'#df7777'],stairs3d:['Staircase',70,110,30,'#b7c7d9'],
+toilet:['Toilet',30,45,25,'#e1ebf4'],sink:['Sink',35,30,20,'#81dce9']
+};
+const uid=()=>Math.random().toString(36).slice(2,10);
+const msg=s=>$('status').textContent=s;
+function snapshot(){undoStack.push(JSON.stringify(items));if(undoStack.length>50)undoStack.shift();redoStack=[]}
+function restore(s){items=JSON.parse(s);selected=null;sync();render2();rebuild3d()}
+function undo(){if(undoStack.length){redoStack.push(JSON.stringify(items));restore(undoStack.pop());msg('Undo')}}
+function redo(){if(redoStack.length){undoStack.push(JSON.stringify(items));restore(redoStack.pop());msg('Redo')}}
+function current(){return items.find(o=>o.id===selected)}
+function create(type,x=30,y=30,w,h){
+ const d=defs[type]||defs.furniture;
+ return {id:uid(),type,name:d[0],x,y,w:w??d[1],h:h??d[2],z:d[3],t:5,r:0,color:d[4]};
+}
+function add(type,x=30,y=30,w,h){snapshot();let o=create(type,x,y,w,h);items.push(o);selected=o.id;sync();render2();rebuild3d();msg(o.name+' added')}
+function fitCanvas(){
+ let r=canvas.getBoundingClientRect(),d=window.devicePixelRatio||1;
+ canvas.width=Math.max(1,Math.round(r.width*d));canvas.height=Math.max(1,Math.round(r.height*d));
+ ctx.setTransform(d,0,0,d,0,0);render2();
+}
+function screen(x,y){return {x:x*zoom+pan.x,y:y*zoom+pan.y}}
+function world(x,y){return {x:(x-pan.x)/zoom,y:(y-pan.y)/zoom}}
+function grid(){
+ const w=canvas.clientWidth,h=canvas.clientHeight;
+ ctx.fillStyle='#080e18';ctx.fillRect(0,0,w,h);
+ const s=20*zoom;if(s<5)return;
+ ctx.strokeStyle='#1a2a3e';ctx.lineWidth=1;ctx.beginPath();
+ for(let x=((pan.x%s)+s)%s;x<w;x+=s){ctx.moveTo(x,0);ctx.lineTo(x,h)}
+ for(let y=((pan.y%s)+s)%s;y<h;y+=s){ctx.moveTo(0,y);ctx.lineTo(w,y)}
+ ctx.stroke();
+}
+function render2(){
+ if(!ctx)return;grid();
+ items.forEach(o=>{
+  let p=screen(o.x,o.y),w=o.w*zoom,h=o.h*zoom;
+  ctx.save();ctx.translate(p.x+w/2,p.y+h/2);ctx.rotate((o.r||0)*Math.PI/180);ctx.translate(-w/2,-h/2);
+  ctx.strokeStyle=o.color;ctx.fillStyle=o.color;ctx.lineWidth=Math.max(1,o.t*zoom/2);
+  if(o.type==='room'){ctx.fillStyle=o.color+'30';ctx.fillRect(0,0,w,h);ctx.strokeRect(0,0,w,h)}
+  else if(o.type==='wall')ctx.fillRect(0,0,w,h);
+  else if(o.type==='dimension'){ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(w,h);ctx.stroke();ctx.fillText(Math.round(Math.hypot(o.w,o.h)),w/2,h/2)}
+  else if(o.type==='electrical'||o.type==='plumbing'){ctx.beginPath();ctx.arc(w/2,h/2,Math.max(4,w/2),0,Math.PI*2);ctx.stroke();ctx.fillText(o.type==='electrical'?'⚡':'P',2,h/2)}
+  else if(o.type==='text'){ctx.fillText(o.name,0,16)}
+  else if(o.type==='door'){ctx.strokeRect(0,0,w,h);ctx.beginPath();ctx.moveTo(0,h);ctx.lineTo(w,0);ctx.stroke()}
+  else if(o.type==='window'){ctx.strokeRect(0,0,w,h);ctx.beginPath();ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.stroke()}
+  else {ctx.globalAlpha=.65;ctx.fillRect(0,0,w,h);ctx.globalAlpha=1;ctx.strokeRect(0,0,w,h);ctx.fillStyle='#fff';ctx.font='11px sans-serif';ctx.fillText(o.name,3,Math.min(15,h-2))}
+  ctx.restore();
+  if(o.id===selected){ctx.save();ctx.strokeStyle='#42b5ff';ctx.setLineDash([5,4]);ctx.strokeRect(p.x,p.y,w,h);ctx.setLineDash([]);ctx.fillStyle='#42b5ff';ctx.fillRect(p.x+w-5,p.y+h-5,10,10);ctx.restore()}
+ });
+ $('list').replaceChildren();
+ [...items].reverse().forEach(o=>{
+  const row=document.createElement('div');row.className='listitem';
+  const label=document.createElement('span');label.textContent=o.name+' ('+o.type+')';
+  const b=document.createElement('button');b.textContent='Select';b.onclick=()=>{selected=o.id;sync();render2();rebuild3d()};
+  row.append(label,b);$('list').append(row);
+ });
+}
+function sync(){
+ const o=current();
+ const vals=o?[o.name,o.x,o.y,o.w,o.h,o.z,o.t,o.r,o.color]:['',0,0,100,60,30,5,0,'#49aaff'];
+ ['name','x','y','w','h','z','t','r','color'].forEach((id,i)=>$(id).value=vals[i]);
+}
+function apply(){
+ let o=current();if(!o)return msg('Select an object first');
+ snapshot();o.name=$('name').value||o.name;
+ ['x','y','w','h','z','t','r'].forEach(k=>{
+  let v=Number($(k).value);if(Number.isFinite(v))o[k]=v;
+ });
+ o.w=Math.max(1,o.w);o.h=Math.max(1,o.h);o.z=Math.max(1,o.z);
+ o.color=$('color').value;render2();rebuild3d();msg('Properties updated');
+}
+function hit(p){
+ for(let i=items.length-1;i>=0;i--){let o=items[i];
+  if(p.x>=o.x-4&&p.x<=o.x+o.w+4&&p.y>=o.y-4&&p.y<=o.y+o.h+4)return o;
+ }return null;
+}
+function pos(e){let r=canvas.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}}
+canvas.addEventListener('pointerdown',e=>{
+ if(view!=='2d')return;
+ canvas.setPointerCapture(e.pointerId);
+ let p=world(pos(e).x,pos(e).y);
+ if(tool==='select'){
+  let o=hit(p);selected=o?.id||null;sync();
+  if(o){snapshot();drag={id:o.id,x:p.x,y:p.y,ox:o.x,oy:o.y}}
+  render2();return;
+ }
+ if(['wall','room','dimension','staircase'].includes(tool)){drag={draw:true,type:tool,x:p.x,y:p.y};return}
+ if(tool==='text'){let v=prompt('Enter text','Label');if(v){add('text',p.x,p.y);current().name=v;sync();render2()}return}
+ add(tool,p.x,p.y);
+});
+canvas.addEventListener('pointermove',e=>{
+ if(!drag||view!=='2d')return;
+ let p0=pos(e),p=world(p0.x,p0.y);
+ if(drag.draw){render2();ctx.strokeStyle='#42b5ff';ctx.setLineDash([4,4]);ctx.strokeRect(Math.min(drag.x,p.x)*zoom+pan.x,Math.min(drag.y,p.y)*zoom+pan.y,Math.abs(p.x-drag.x)*zoom,Math.abs(p.y-drag.y)*zoom);ctx.setLineDash([])}
+ else{let o=items.find(v=>v.id===drag.id);if(o){o.x=drag.ox+p.x-drag.x;o.y=drag.oy+p.y-drag.y;sync();render2()}}
+});
+canvas.addEventListener('pointerup',e=>{
+ if(!drag)return;
+ if(drag.draw){let p0=pos(e),p=world(p0.x,p0.y),d=drag;
+ add(d.type,Math.min(d.x,p.x),Math.min(d.y,p.y),Math.max(10,Math.abs(p.x-d.x)),Math.max(10,Math.abs(p.y-d.y)))}
+ drag=null;render2();rebuild3d();
+});
+$('toolbar').onclick=e=>{
+ let b=e.target.closest('[data-tool]');if(!b)return;
+ tool=b.dataset.tool;document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('active',x===b));msg('Tool: '+tool);
+};
+$('apply').onclick=apply;
+$('undo').onclick=undo;$('redo').onclick=redo;
+$('delete').onclick=()=>{if(current()){snapshot();items=items.filter(o=>o.id!==selected);selected=null;sync();render2();rebuild3d()}};
+$('clone').onclick=()=>{if(current()){snapshot();let o={...current(),id:uid(),x:current().x+20,y:current().y+20};items.push(o);selected=o.id;sync();render2();rebuild3d()}};
+$('rotate').onclick=()=>{if(current()){snapshot();current().r=(current().r+15)%360;sync();render2();rebuild3d()}};
+$('front').onclick=()=>{if(current()){snapshot();let o=current();items=items.filter(v=>v.id!==o.id);items.push(o);render2()}};
+$('add3d').onclick=()=>add($('item').value,40,40);
+$('tab2').onclick=()=>setView('2d');$('tab3').onclick=()=>setView('3d');
+function setView(v){
+ view=v;$('tab2').classList.toggle('active',v==='2d');$('tab3').classList.toggle('active',v==='3d');
+ canvas.style.display=v==='2d'?'block':'none';$('threeView').style.display=v==='3d'?'block':'none';
+ if(v==='3d'){init3d();rebuild3d();renderer.setSize($('threeView').clientWidth,$('threeView').clientHeight);renderer.render(scene,camera)}
+}
+function init3d(){
+ if(renderer)return;
+ scene=new THREE.Scene();scene.background=new THREE.Color('#101a2b');
+ camera=new THREE.PerspectiveCamera(45,1,.1,10000);camera.position.set(250,230,300);
+ renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+ renderer.shadowMap.enabled=true;$('threeView').appendChild(renderer.domElement);
+ controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;
+ scene.add(new THREE.HemisphereLight(0xffffff,0x46536a,2));
+ let light=new THREE.DirectionalLight(0xffffff,2.2);light.position.set(200,350,250);scene.add(light);
+ scene.add(new THREE.GridHelper(600,30,0x38516c,0x25384d));
+ modelGroup=new THREE.Group();scene.add(modelGroup);
+ function animate(){requestAnimationFrame(animate);controls.update();if(renderer&&view==='3d')renderer.render(scene,camera)}
+ animate();
+}
+function rebuild3d(){
+ if(!renderer)return;
+ while(modelGroup.children.length){let c=modelGroup.children.pop();c.geometry?.dispose();if(c.material){if(Array.isArray(c.material))c.material.forEach(m=>m.dispose());else c.material.dispose()}}
+ items.forEach(o=>{
+  const mat=new THREE.MeshStandardMaterial({color:o.color,roughness:.75});
+  let geo=new THREE.BoxGeometry(Math.max(1,o.w),Math.max(1,o.z),Math.max(1,o.h));
+  let mesh=new THREE.Mesh(geo,mat);
+  mesh.position.set(o.x+o.w/2,o.z/2,o.y+o.h/2);
+  mesh.rotation.y=-(o.r||0)*Math.PI/180;
+  mesh.userData.id=o.id;modelGroup.add(mesh);
+  if(o.type==='staircase'||o.type==='stairs3d'){
+   for(let i=0;i<7;i++){
+    let step=new THREE.Mesh(new THREE.BoxGeometry(o.w,o.z*(i+1)/7,Math.max(2,o.h/7)),mat);
+    step.position.set(o.x+o.w/2,o.z*(i+1)/14,o.y+o.h*(i+.5)/7);
+    modelGroup.add(step);
+   }
+  }
+ });
+ if(view==='3d'&&renderer){renderer.setSize($('threeView').clientWidth,$('threeView').clientHeight);renderer.render(scene,camera)}
+}
+window.addEventListener('resize',()=>{fitCanvas();if(renderer){camera.aspect=$('threeView').clientWidth/Math.max(1,$('threeView').clientHeight);camera.updateProjectionMatrix();renderer.setSize($('threeView').clientWidth,$('threeView').clientHeight)}});
+function download(name,data,type='application/octet-stream'){
+ let a=document.createElement('a'),url=URL.createObjectURL(new Blob([data],{type}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1200);
+}
+$('save').onclick=()=>{
+ try{localStorage.setItem('engCadPrime',JSON.stringify(items));msg('Saved in this browser')}
+ catch(e){msg('Storage unavailable; use JSON Export')}
+};
+$('exportJSON').onclick=()=>download('eng-cad-project.json',JSON.stringify({version:VERSION,items},null,2),'application/json');
+$('importJSON').onclick=()=>$('file').click();
+$('file').onchange=async e=>{
+ try{let j=JSON.parse(await e.target.files[0].text());snapshot();items=Array.isArray(j)?j:j.items;selected=null;sync();render2();rebuild3d();msg('Project loaded')}
+ catch(e){msg('Could not read JSON file')}e.target.value='';
+};
+$('dxf').onclick=()=>{
+ let s='0\nSECTION\n2\nENTITIES\n';
+ items.forEach(o=>{
+  s+=`0\nLWPOLYLINE\n8\n${o.type.toUpperCase()}\n90\n4\n70\n1\n10\n${o.x}\n20\n${o.y}\n10\n${o.x+o.w}\n20\n${o.y}\n10\n${o.x+o.w}\n20\n${o.y+o.h}\n10\n${o.x}\n20\n${o.y+o.h}\n`;
+ });
+ download('eng-cad.dxf',s+'0\nENDSEC\n0\nEOF\n','application/dxf');
+};
+$('svg').onclick=()=>{
+ let shapes=items.map(o=>`<rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.h}" fill="${o.color}" fill-opacity=".3" stroke="${o.color}"/>`).join('\n');
+ download('eng-cad.svg',`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">${shapes}</svg>`,'image/svg+xml');
+};
+$('png').onclick=()=>{setView('2d');const a=document.createElement('a');a.download='eng-cad.png';a.href=canvas.toDataURL('image/png');a.click()};
+$('pdf').onclick=()=>window.print();
+$('obj').onclick=()=>{
+ let v=[],f=[],n=1;
+ items.forEach(o=>{
+  const x=o.x,y=o.y,z=0,w=o.w,h=o.h,d=o.z;
+  [[x,y,z],[x+w,y,z],[x+w,y+h,z],[x,y+h,z],[x,y,d],[x+w,y,d],[x+w,y+h,d],[x,y+h,d]].forEach(p=>v.push(`v ${p[0]} ${p[2]} ${p[1]}`));
+  [[1,2,3,4],[5,8,7,6],[1,5,6,2],[2,6,7,3],[3,7,8,4],[4,8,5,1]].forEach(a=>f.push('f '+a.map(i=>i+n-1).join(' ')));n+=8;
+ });
+ download('eng-cad.obj',v.concat(f).join('\n')+'\n','text/plain');
+};
+$('sample').onclick=()=>{
+ snapshot();items=[
+ create('room',20,20,240,180),create('wall',20,20,240,8),
+ create('wall',20,192,240,8),create('wall',20,28,8,164),
+ create('wall',252,28,8,164),create('wall',140,28,8,164),
+ create('door',40,192,35,5),create('window',80,20,55,5),
+ create('bed',35,45),create('sofa',165,50),create('table',170,115),
+ create('electrical',100,60),create('plumbing',220,150),create('staircase',165,140)
+ ];selected=items[0].id;sync();render2();rebuild3d();msg('Sample plan ready');
+};
+
+// Prime update: check latest GitHub Release for a configured repository.
+let latestRelease=null;
+function repoParts(){
+ let s=$('repo').value.trim().replace(/\/+$/,'');
+ try{let u=new URL(s);let p=u.pathname.split('/').filter(Boolean);if(u.hostname!=='github.com'||p.length<2)throw 0;return {owner:p[0],repo:p[1]}}
+ catch(e){throw Error('GitHub repository URL দিন: https://github.com/owner/repository')}
+}
+$('check').onclick=async()=>{
+ const box=$('updateInfo');box.textContent='Checking GitHub Releases…';
+ try{
+  let {owner,repo}=repoParts();
+  let res=await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest`,{headers:{Accept:'application/vnd.github+json'}});
+  if(!res.ok)throw Error(res.status===404?'Release পাওয়া যায়নি। GitHub-এ একটি Release তৈরি করুন।':'GitHub API error: '+res.status);
+  latestRelease=await res.json();
+  box.textContent=`Installed: ${VERSION} · Latest: ${latestRelease.tag_name} · ${latestRelease.name||''}`;
+  $('update').disabled=false;
+ }catch(e){latestRelease=null;box.textContent=e.message}
+};
+$('update').onclick=()=>{
+ if(!latestRelease){$('updateInfo').textContent='আগে Check Update চাপুন।';return}
+ if(confirm('GitHub Release খুলবেন? আপনার প্রকাশিত নতুন সংস্করণ দেখতে বা ইনস্টল করতে সেখানে যান।')){
+  window.open(latestRelease.html_url,'_blank','noopener');
+ }
+};
+try{const s=localStorage.getItem('engCadPrime');if(s)items=JSON.parse(s)}catch(e){}
+fitCanvas();sync();render2();
+</script>
+</body>
+</html>
