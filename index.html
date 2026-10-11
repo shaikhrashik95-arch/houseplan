@@ -1,0 +1,312 @@
+
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eng. CAD Studio</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#151923;color:#fff;font-family:Arial,sans-serif}
+header{padding:14px;background:#087e8b;text-align:center}
+header h2{margin:0;font-size:22px}
+header p{margin:5px 0 0;font-size:12px}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px;padding:10px;background:#222938}
+button,select,input{padding:10px;border:1px solid #536078;border-radius:6px;background:#30394b;color:white}
+button.active{background:#087e8b;border-color:#5de8ed}
+button:active{background:#087e8b}
+#canvasWrap{width:100%;height:60vh;min-height:300px;overflow:hidden;background:#101722}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+.status{padding:8px;font-size:12px;background:#222938}
+footer{padding:12px;font-size:12px;color:#ccd3df}
+</style>
+</head>
+<body>
+<header>
+<h2>Eng. CAD Studio</h2>
+<p>2D Floor Plan & CAD Designer</p>
+</header>
+
+<div class="toolbar">
+<button data-tool="select" class="active">Select</button>
+<button data-tool="line">Line</button>
+<button data-tool="wall">Wall</button>
+<button data-tool="rect">Rectangle</button>
+<button data-tool="circle">Circle</button>
+<button data-tool="dim">Dimension</button>
+<button data-tool="erase">Erase</button>
+</div>
+
+<div class="toolbar">
+<label>Grid <input id="grid" type="checkbox" checked></label>
+<label>Snap <input id="snap" type="checkbox" checked></label>
+<label>Wall width <input id="thick" type="number" min="1" max="30" value="8" style="width:65px"></label>
+<button id="undo">↶ Undo</button>
+<button id="redo">↷ Redo</button>
+<button id="clear">Clear</button>
+</div>
+
+<div class="toolbar">
+<button id="png">Download PNG</button>
+<button id="save">Save</button>
+<button id="load">Load</button>
+<button id="json">Export JSON</button>
+<input id="file" type="file" accept=".json,application/json" hidden>
+</div>
+
+<div id="canvasWrap">
+<canvas id="cad"></canvas>
+</div>
+<div class="status" id="status">Tool: Select | Ready</div>
+<footer>
+Eng. CAD Studio · Mobile CAD Drafting<br>
+নোট: এটি একটি প্রাথমিক 2D CAD ড্রাফটিং টুল।
+</footer>
+
+<script>
+(function(){
+const canvas=document.getElementById('cad');
+const ctx=canvas.getContext('2d');
+const wrap=document.getElementById('canvasWrap');
+const status=document.getElementById('status');
+let objects=[],undoStack=[],redoStack=[];
+let tool='select',start=null,current=null,preview=null;
+let selected=-1,dragging=false,moved=false;
+let dpr=1,W=0,H=0;
+const step=20;
+
+function resize(){
+ dpr=Math.min(window.devicePixelRatio||1,2);
+ W=wrap.clientWidth; H=wrap.clientHeight;
+ canvas.width=W*dpr; canvas.height=H*dpr;
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+ draw();
+}
+window.addEventListener('resize',resize);
+
+function point(e){
+ const r=canvas.getBoundingClientRect();
+ let x=e.clientX-r.left,y=e.clientY-r.top;
+ if(document.getElementById('snap').checked){
+  x=Math.round(x/step)*step;
+  y=Math.round(y/step)*step;
+ }
+ return {x,y};
+}
+function rawPoint(e){
+ const r=canvas.getBoundingClientRect();
+ return {x:e.clientX-r.left,y:e.clientY-r.top};
+}
+function saveHistory(){
+ undoStack.push(JSON.stringify(objects));
+ if(undoStack.length>60)undoStack.shift();
+ redoStack=[];
+}
+function setTool(t){
+ tool=t;selected=-1;
+ document.querySelectorAll('[data-tool]').forEach(b=>{
+  b.classList.toggle('active',b.dataset.tool===t);
+ });
+ status.textContent='Tool: '+t.toUpperCase();
+ draw();
+}
+document.querySelectorAll('[data-tool]').forEach(b=>{
+ b.onclick=()=>setTool(b.dataset.tool);
+});
+
+function drawGrid(){
+ if(!document.getElementById('grid').checked)return;
+ ctx.save();
+ ctx.strokeStyle='#263244';ctx.lineWidth=0.5;
+ for(let x=0;x<W;x+=step){
+  ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+ }
+ for(let y=0;y<H;y+=step){
+  ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+ }
+ ctx.restore();
+}
+function line(x1,y1,x2,y2,color,width){
+ ctx.beginPath();ctx.strokeStyle=color;ctx.lineWidth=width;
+ ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+}
+function drawObj(o,i){
+ const color=i===selected?'#ffcb47':'#e9f1ff';
+ ctx.strokeStyle=color;ctx.fillStyle=color;
+ ctx.lineWidth=o.type==='wall'?Number(document.getElementById('thick').value):2;
+ ctx.beginPath();
+ if(o.type==='line'||o.type==='wall'||o.type==='dim'){
+  ctx.moveTo(o.x1,o.y1);ctx.lineTo(o.x2,o.y2);ctx.stroke();
+  if(o.type==='dim'){
+   let len=Math.hypot(o.x2-o.x1,o.y2-o.y1);
+   let label=(len/10).toFixed(2)+' units';
+   ctx.font='12px Arial';
+   ctx.fillText(label,(o.x1+o.x2)/2+4,(o.y1+o.y2)/2-5);
+   const a=Math.atan2(o.y2-o.y1,o.x2-o.x1);
+   for(let [x,y,ang] of [[o.x1,o.y1,a],[o.x2,o.y2,a+Math.PI]]){
+    ctx.beginPath();ctx.moveTo(x,y);
+    ctx.lineTo(x+8*Math.cos(ang+0.5),y+8*Math.sin(ang+0.5));
+    ctx.lineTo(x+8*Math.cos(ang-0.5),y+8*Math.sin(ang-0.5));
+    ctx.closePath();ctx.fill();
+   }
+  }
+ }else if(o.type==='rect'){
+  ctx.strokeRect(o.x1,o.y1,o.x2-o.x1,o.y2-o.y1);
+ }else if(o.type==='circle'){
+  ctx.arc(o.x1,o.y1,Math.hypot(o.x2-o.x1,o.y2-o.y1),0,Math.PI*2);
+  ctx.stroke();
+ }
+}
+function draw(){
+ if(!ctx)return;
+ ctx.clearRect(0,0,W,H);
+ ctx.fillStyle='#101722';ctx.fillRect(0,0,W,H);
+ drawGrid();
+ objects.forEach(drawObj);
+ if(preview){
+  ctx.save();ctx.globalAlpha=.7;
+  drawObj(preview,-1);ctx.restore();
+ }
+}
+function distanceToSegment(p,o){
+ const dx=o.x2-o.x1,dy=o.y2-o.y1;
+ const l=dx*dx+dy*dy;
+ if(!l)return Math.hypot(p.x-o.x1,p.y-o.y1);
+ const t=Math.max(0,Math.min(1,((p.x-o.x1)*dx+(p.y-o.y1)*dy)/l));
+ return Math.hypot(p.x-(o.x1+t*dx),p.y-(o.y1+t*dy));
+}
+function hitTest(p,o){
+ if(o.type==='circle'){
+  const r=Math.hypot(o.x2-o.x1,o.y2-o.y1);
+  return Math.abs(Math.hypot(p.x-o.x1,p.y-o.y1)-r)<12;
+ }
+ if(o.type==='rect'){
+  const x1=Math.min(o.x1,o.x2),x2=Math.max(o.x1,o.x2);
+  const y1=Math.min(o.y1,o.y2),y2=Math.max(o.y1,o.y2);
+  return p.x>=x1-8&&p.x<=x2+8&&p.y>=y1-8&&p.y<=y2+8;
+ }
+ return distanceToSegment(p,o)<12;
+}
+function hit(p){
+ for(let i=objects.length-1;i>=0;i--){
+  if(hitTest(p,objects[i]))return i;
+ }
+ return -1;
+}
+canvas.addEventListener('pointerdown',e=>{
+ e.preventDefault();
+ const p=point(e);
+ start=p;current=p;moved=false;
+ if(tool==='select'){
+  selected=hit(p);
+  if(selected>=0){saveHistory();dragging=true;}
+  draw();return;
+ }
+ if(tool==='erase'){
+  let i=hit(p);
+  if(i>=0){saveHistory();objects.splice(i,1);selected=-1;}
+  draw();return;
+ }
+ preview={type:tool,x1:p.x,y1:p.y,x2:p.x,y2:p.y};
+ canvas.setPointerCapture(e.pointerId);
+ draw();
+});
+canvas.addEventListener('pointermove',e=>{
+ const p=point(e);
+ if(dragging&&selected>=0&&start){
+  const o=objects[selected];
+  const dx=p.x-start.x,dy=p.y-start.y;
+  if(dx||dy)moved=true;
+  o.x1+=dx;o.x2+=dx;o.y1+=dy;o.y2+=dy;
+  start=p;draw();return;
+ }
+ if(preview&&start){
+  current=p;preview.x2=p.x;preview.y2=p.y;draw();
+ }
+ const rp=rawPoint(e);
+ status.textContent='Tool: '+tool.toUpperCase()+
+ ' | X: '+rp.x.toFixed(0)+' Y: '+rp.y.toFixed(0);
+});
+canvas.addEventListener('pointerup',e=>{
+ if(dragging){
+  dragging=false;start=null;
+  draw();return;
+ }
+ if(!preview||!start)return;
+ const p=point(e);
+ preview.x2=p.x;preview.y2=p.y;
+ if(Math.hypot(p.x-start.x,p.y-start.y)>2){
+  saveHistory();objects.push({...preview});
+ }
+ preview=null;start=null;draw();
+});
+canvas.addEventListener('pointercancel',()=>{
+ dragging=false;preview=null;start=null;draw();
+});
+
+document.getElementById('undo').onclick=()=>{
+ if(!undoStack.length)return;
+ redoStack.push(JSON.stringify(objects));
+ objects=JSON.parse(undoStack.pop());selected=-1;draw();
+};
+document.getElementById('redo').onclick=()=>{
+ if(!redoStack.length)return;
+ undoStack.push(JSON.stringify(objects));
+ objects=JSON.parse(redoStack.pop());selected=-1;draw();
+};
+document.getElementById('clear').onclick=()=>{
+ if(!objects.length)return;
+ if(confirm('সব ড্রয়িং মুছে ফেলবেন?')){
+  saveHistory();objects=[];selected=-1;draw();
+ }
+};
+document.getElementById('save').onclick=()=>{
+ try{
+  localStorage.setItem('engCadStudioDrawing',JSON.stringify(objects));
+  alert('ড্রয়িং এই ব্রাউজারে Save হয়েছে।');
+ }catch(e){alert('Save করা যায়নি। JSON Export ব্যবহার করুন।');}
+};
+document.getElementById('load').onclick=()=>{
+ try{
+  const data=localStorage.getItem('engCadStudioDrawing');
+  if(!data){alert('কোনো Save করা ড্রয়িং পাওয়া যায়নি।');return;}
+  saveHistory();objects=JSON.parse(data);draw();
+ }catch(e){alert('ফাইল লোড করা যায়নি।');}
+};
+document.getElementById('json').onclick=()=>{
+ download('eng-cad-drawing.json',JSON.stringify({
+  app:'Eng. CAD Studio',version:1,objects:objects
+ },null,2),'application/json');
+};
+document.getElementById('png').onclick=()=>{
+ const a=document.createElement('a');
+ a.download='eng-cad-floor-plan.png';
+ a.href=canvas.toDataURL('image/png');a.click();
+};
+function download(name,data,type){
+ const blob=new Blob([data],{type});
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement('a');
+ a.href=url;a.download=name;a.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+document.getElementById('file').onchange=e=>{
+ const f=e.target.files[0];if(!f)return;
+ const reader=new FileReader();
+ reader.onload=()=>{
+  try{
+   const data=JSON.parse(reader.result);
+   const list=Array.isArray(data)?data:data.objects;
+   if(!Array.isArray(list))throw Error('Invalid');
+   saveHistory();objects=list;draw();alert('ড্রয়িং লোড হয়েছে।');
+  }catch(err){alert('সঠিক JSON ড্রয়িং ফাইল নয়।');}
+ };
+ reader.readAsText(f);
+};
+document.getElementById('grid').onchange=draw;
+document.getElementById('snap').onchange=()=>{};
+resize();
+})();
+</script>
+</body>
+</html>
