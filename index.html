@@ -545,3 +545,330 @@ setStatus("Ready • Draw using the toolbar");
 </script>
 </body>
 </html>
+
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#111827">
+<title>Eng. CAD Studio V2</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#111827;color:#f9fafb;font-family:Arial,sans-serif}
+header{padding:12px;background:#0b1220}
+h2{font-size:20px;margin:0}
+#status{font-size:12px;color:#6ee7b7;margin-top:5px}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px;padding:8px;background:#1f2937}
+button{border:1px solid #4b5563;border-radius:7px;background:#374151;color:white;padding:10px;font-size:12px}
+button.active{background:#047857;border-color:#6ee7b7}
+#workspace{height:calc(100dvh - 260px);min-height:300px;background:white}
+canvas{width:100%;height:100%;display:block;touch-action:none}
+#bottom{padding:9px;font-size:12px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+<header>
+<h2>Eng. CAD Studio V2</h2>
+<div id="status">2D CAD • Ready</div>
+</header>
+
+<div class="toolbar" id="tools">
+<button class="active" data-tool="select">Select / Move</button>
+<button data-tool="wall">Wall</button>
+<button data-tool="line">Line</button>
+<button data-tool="rect">Room / Rect</button>
+<button data-tool="door">Door</button>
+<button data-tool="window">Window</button>
+<button data-tool="dimension">Dimension</button>
+<button data-tool="label">Room Label</button>
+<button data-tool="circle">Circle</button>
+</div>
+
+<div class="toolbar">
+<button id="view2d" class="active">2D Plan</button>
+<button id="view3d">3D House Preview</button>
+<button id="undo">Undo</button>
+<button id="redo">Redo</button>
+<button id="del">Delete</button>
+<button id="grid" class="active">Grid ON</button>
+<button id="snap" class="active">Snap ON</button>
+<button id="zoomout">−</button>
+<button id="zoomin">+</button>
+<button id="fit">Reset View</button>
+</div>
+
+<div class="toolbar">
+<button id="save">Save JSON</button>
+<button id="loadbtn">Open JSON</button>
+<input type="file" id="file" accept=".json,application/json">
+<button id="png">Export PNG</button>
+<button id="clear">Clear All</button>
+</div>
+
+<div id="workspace"><canvas id="cv"></canvas></div>
+<div id="bottom">
+<span id="xy">X:0 Y:0</span>
+<span id="total">Objects: 0</span>
+<span>Units: grid units</span>
+</div>
+
+<script>
+(()=>{
+"use strict";
+const cv=document.getElementById("cv"),c=cv.getContext("2d");
+const status=document.getElementById("status");
+let objects=[],undoStack=[],redoStack=[];
+let tool="select",selected=-1,grid=true,snap=true,view="2d";
+let zoom=1,panX=0,panY=0,start=null,preview=null;
+let active=false,dragOffset=null,last=null;
+const gs=20;
+
+function say(s){status.textContent=s}
+function resize(){
+ const r=cv.getBoundingClientRect(),d=window.devicePixelRatio||1;
+ cv.width=Math.round(r.width*d);cv.height=Math.round(r.height*d);
+ c.setTransform(d,0,0,d,0,0);draw();
+}
+window.addEventListener("resize",resize);
+function W(x,y){return{x:(x-panX)/zoom,y:(y-panY)/zoom}}
+function S(x,y){return{x:x*zoom+panX,y:y*zoom+panY}}
+function snapP(p){return snap?{x:Math.round(p.x/gs)*gs,y:Math.round(p.y/gs)*gs}:p}
+function pos(e){const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}}
+function hist(){undoStack.push(JSON.stringify(objects));if(undoStack.length>80)undoStack.shift();redoStack=[]}
+function undo(){if(!undoStack.length)return;redoStack.push(JSON.stringify(objects));objects=JSON.parse(undoStack.pop());selected=-1;draw();say("Undo")}
+function redo(){if(!redoStack.length)return;undoStack.push(JSON.stringify(objects));objects=JSON.parse(redoStack.pop());selected=-1;draw();say("Redo")}
+function add(o){hist();objects.push(o);selected=objects.length-1;draw()}
+function rect(a,b){return{x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(b.x-a.x),h:Math.abs(b.y-a.y)}}
+function make(a,b,t){
+ if(["wall","line","door","window","dimension"].includes(t))
+   return{type:t,x1:a.x,y1:a.y,x2:b.x,y2:b.y};
+ if(t==="rect")return{type:t,...rect(a,b)};
+ if(t==="circle")return{type:t,cx:a.x,cy:a.y,r:Math.hypot(b.x-a.x,b.y-a.y)};
+ return null;
+}
+function gridDraw(w,h){
+ if(!grid)return;
+ c.beginPath();c.strokeStyle="#e5e7eb";c.lineWidth=1;
+ let step=gs;while(step*zoom<8)step*=2;
+ let l=-panX/zoom,r=(w-panX)/zoom,t=-panY/zoom,b=(h-panY)/zoom;
+ for(let x=Math.floor(l/step)*step;x<r;x+=step){let sx=S(x,0).x;c.moveTo(sx,0);c.lineTo(sx,h)}
+ for(let y=Math.floor(t/step)*step;y<b;y+=step){let sy=S(0,y).y;c.moveTo(0,sy);c.lineTo(w,sy)}
+ c.stroke();
+}
+function line(x1,y1,x2,y2){c.beginPath();c.moveTo(x1,y1);c.lineTo(x2,y2);c.stroke()}
+function drawObj(o,i){
+ c.save();
+ c.strokeStyle=i===selected?"#dc2626":"#111827";
+ c.fillStyle="#111827";
+ c.lineWidth=(o.type==="wall"?5:o.type==="window"?3:2)/zoom;
+ if(o.type==="wall"||o.type==="line")line(o.x1,o.y1,o.x2,o.y2);
+ if(o.type==="door"){
+   line(o.x1,o.y1,o.x2,o.y2);
+   const len=Math.hypot(o.x2-o.x1,o.y2-o.y1);
+   if(len>0){c.setLineDash([5/zoom,4/zoom]);line(o.x1,o.y1,o.x1-(o.y2-o.y1),o.y1+(o.x2-o.x1));c.setLineDash([])}
+ }
+ if(o.type==="window"){
+   line(o.x1,o.y1,o.x2,o.y2);
+   const dx=o.x2-o.x1,dy=o.y2-o.y1,len=Math.hypot(dx,dy)||1;
+   const ox=-dy/len*4/zoom,oy=dx/len*4/zoom;
+   line(o.x1+ox,o.y1+oy,o.x2+ox,o.y2+oy);
+ }
+ if(o.type==="rect")c.strokeRect(o.x,o.y,o.w,o.h);
+ if(o.type==="circle"){c.beginPath();c.arc(o.cx,o.cy,o.r,0,Math.PI*2);c.stroke()}
+ if(o.type==="dimension"){
+   line(o.x1,o.y1,o.x2,o.y2);
+   const len=Math.hypot(o.x2-o.x1,o.y2-o.y1);
+   const midx=(o.x1+o.x2)/2,midy=(o.y1+o.y2)/2;
+   c.save();c.fillStyle="#2563eb";c.font=(12/zoom)+"px Arial";
+   c.fillText((len/gs).toFixed(2)+" units",midx,midy-5/zoom);c.restore();
+ }
+ if(o.type==="label"){
+   c.save();c.font=(14/zoom)+"px Arial";c.fillStyle="#047857";
+   c.fillText(o.text,o.x,o.y);c.restore();
+ }
+ if(i===selected&&o.type!=="label"){
+   let pts=[];
+   if("x1"in o)pts=[{x:o.x1,y:o.y1},{x:o.x2,y:o.y2}];
+   if(o.type==="rect")pts=[{x:o.x,y:o.y},{x:o.x+o.w,y:o.y+o.h}];
+   if(o.type==="circle")pts=[{x:o.cx,y:o.cy},{x:o.cx+o.r,y:o.cy}];
+   c.fillStyle="#2563eb";
+   pts.forEach(p=>{c.beginPath();c.arc(p.x,p.y,4/zoom,0,Math.PI*2);c.fill()});
+ }
+ c.restore();
+}
+function draw3d(){
+ const r=cv.getBoundingClientRect(),w=r.width,h=r.height;
+ c.fillStyle="#f8fafc";c.fillRect(0,0,w,h);
+ c.fillStyle="#334155";c.font="bold 17px Arial";
+ c.fillText("3D House Preview",16,28);
+ c.fillStyle="#64748b";c.font="12px Arial";
+ c.fillText("Wall lines are shown as raised 3D segments",16,47);
+ // Isometric projection
+ const scale=Math.min(w,h)*0.65/Math.max(400,Math.min(w,h));
+ const sc=Math.max(.25,Math.min(1.2,scale))*zoom;
+ const cx=w/2+panX,cy=h*.67+panY;
+ function iso(x,y,z){
+   return{x:cx+(x-y)*.707*sc,y:cy+(x+y)*.354*sc-z*sc};
+ }
+ const walls=objects.filter(o=>o.type==="wall"||o.type==="line");
+ if(!walls.length){
+   c.fillStyle="#475569";c.fillText("2D Plan-এ Wall আঁকুন, তারপর 3D দেখুন।",16,75);return;
+ }
+ const height=100;
+ walls.forEach(o=>{
+   const a=iso(o.x1,o.y1,0),b=iso(o.x2,o.y2,0);
+   const at=iso(o.x1,o.y1,height),bt=iso(o.x2,o.y2,height);
+   c.fillStyle="#d1d5db";c.strokeStyle="#475569";c.lineWidth=1;
+   c.beginPath();c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);c.lineTo(bt.x,bt.y);c.lineTo(at.x,at.y);c.closePath();c.fill();c.stroke();
+   c.fillStyle="#f3f4f6";
+   c.beginPath();c.moveTo(at.x,at.y);c.lineTo(bt.x,bt.y);c.lineTo(bt.x+3,bt.y-4);c.lineTo(at.x+3,at.y-4);c.closePath();c.fill();c.stroke();
+ });
+ c.fillStyle="#64748b";c.font="12px Arial";
+ c.fillText("Concept preview only • not a construction model",16,h-15);
+}
+function draw(){
+ const r=cv.getBoundingClientRect(),w=r.width,h=r.height;
+ if(view==="3d"){draw3d();return}
+ c.fillStyle="white";c.fillRect(0,0,w,h);gridDraw(w,h);
+ c.save();c.translate(panX,panY);c.scale(zoom,zoom);
+ objects.forEach(drawObj);
+ if(preview){c.save();c.strokeStyle="#059669";c.setLineDash([5/zoom,4/zoom]);c.lineWidth=2/zoom;
+ const o=preview;
+ if(o.type==="wall"||o.type==="line"||o.type==="door"||o.type==="window"||o.type==="dimension")line(o.x1,o.y1,o.x2,o.y2);
+ if(o.type==="rect")c.strokeRect(o.x,o.y,o.w,o.h);
+ if(o.type==="circle"){c.beginPath();c.arc(o.cx,o.cy,o.r,0,Math.PI*2);c.stroke()}
+ c.restore()}
+ c.restore();
+ document.getElementById("total").textContent="Objects: "+objects.length;
+}
+function dist(p,a,b){
+ const dx=b.x-a.x,dy=b.y-a.y,l=dx*dx+dy*dy;
+ const t=l?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/l)):0;
+ return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);
+}
+function hit(p,o){
+ const t=10/zoom;
+ if(["wall","line","door","window","dimension"].includes(o.type))
+   return dist(p,{x:o.x1,y:o.y1},{x:o.x2,y:o.y2})<t;
+ if(o.type==="rect"){
+   if(p.x<o.x-t||p.x>o.x+o.w+t||p.y<o.y-t||p.y>o.y+o.h+t)return false;
+   return Math.min(Math.abs(p.x-o.x),Math.abs(p.x-o.x-o.w),Math.abs(p.y-o.y),Math.abs(p.y-o.y-o.h))<t;
+ }
+ if(o.type==="circle")return Math.abs(Math.hypot(p.x-o.cx,p.y-o.cy)-o.r)<t;
+ if(o.type==="label")return Math.hypot(p.x-o.x,p.y-o.y)<30/zoom;
+ return false;
+}
+function find(p){for(let i=objects.length-1;i>=0;i--)if(hit(p,objects[i]))return i;return -1}
+function move(o,dx,dy){
+ if("x1"in o){o.x1+=dx;o.x2+=dx;o.y1+=dy;o.y2+=dy}
+ else if(o.type==="rect"){o.x+=dx;o.y+=dy}
+ else if(o.type==="circle"){o.cx+=dx;o.cy+=dy}
+ else if(o.type==="label"){o.x+=dx;o.y+=dy}
+}
+cv.addEventListener("pointerdown",e=>{
+ if(view==="3d")return;
+ e.preventDefault();cv.setPointerCapture(e.pointerId);
+ const sp=pos(e),p=snapP(W(sp.x,sp.y));last=sp;start=p;active=true;dragOffset=null;
+ if(tool==="select"){
+   selected=find(p);
+   if(selected>=0){hist();dragOffset=p;say("Selected: drag to move")}
+   else say("Select an object");
+   draw();return;
+ }
+ if(tool==="label"){
+   const text=prompt("Room name (e.g. Bedroom, Kitchen):","Bedroom");
+   if(text&&text.trim())add({type:"label",x:p.x,y:p.y,text:text.trim()});
+   active=false;start=null;return;
+ }
+ if(tool==="erase"){
+   const i=find(p);
+   if(i>=0){hist();objects.splice(i,1);selected=-1;draw();say("Object erased")}
+   active=false;return;
+ }
+ preview=make(p,p,tool);
+});
+cv.addEventListener("pointermove",e=>{
+ const sp=pos(e),raw=W(sp.x,sp.y),p=snapP(raw);
+ document.getElementById("xy").textContent="X:"+Math.round(raw.x/gs)+" Y:"+Math.round(raw.y/gs);
+ if(!active)return;
+ if(tool==="select"&&selected>=0&&dragOffset){
+   const o=objects[selected];move(o,p.x-dragOffset.x,p.y-dragOffset.y);dragOffset=p;draw();
+ }else if(preview&&start){preview=make(start,p,tool);draw()}
+ last=sp;
+});
+cv.addEventListener("pointerup",e=>{
+ if(!active)return;active=false;
+ if(tool!=="select"&&tool!=="erase"&&tool!=="label"&&preview&&start){
+   const p=snapP(W(pos(e).x,pos(e).y)),o=make(start,p,tool);
+   let valid=false;
+   if(o&&"x1"in o)valid=Math.hypot(o.x2-o.x1,o.y2-o.y1)>1;
+   else if(o&&o.type==="rect")valid=o.w>1&&o.h>1;
+   else if(o&&o.type==="circle")valid=o.r>1;
+   if(valid){add(o);say(tool+" created")}
+ }
+ preview=null;start=null;dragOffset=null;draw();
+});
+cv.addEventListener("pointercancel",()=>{active=false;preview=null;start=null;draw()});
+
+document.querySelectorAll("[data-tool]").forEach(b=>b.onclick=()=>{
+ tool=b.dataset.tool;
+ document.querySelectorAll("[data-tool]").forEach(x=>x.classList.toggle("active",x===b));
+ say("Tool: "+b.textContent);
+});
+document.getElementById("undo").onclick=undo;
+document.getElementById("redo").onclick=redo;
+document.getElementById("del").onclick=()=>{
+ if(selected<0||selected>=objects.length){say("Select an object first");return}
+ hist();objects.splice(selected,1);selected=-1;draw();say("Deleted");
+};
+document.getElementById("clear").onclick=()=>{
+ if(objects.length&&confirm("Delete all objects?")){hist();objects=[];selected=-1;draw()}
+};
+document.getElementById("grid").onclick=function(){grid=!grid;this.classList.toggle("active",grid);this.textContent="Grid "+(grid?"ON":"OFF");draw()};
+document.getElementById("snap").onclick=function(){snap=!snap;this.classList.toggle("active",snap);this.textContent="Snap "+(snap?"ON":"OFF")};
+document.getElementById("zoomin").onclick=()=>{zoom=Math.min(zoom*1.2,4);draw()};
+document.getElementById("zoomout").onclick=()=>{zoom=Math.max(zoom/1.2,.25);draw()};
+document.getElementById("fit").onclick=()=>{zoom=1;panX=0;panY=0;draw()};
+document.getElementById("view2d").onclick=()=>{view="2d";document.getElementById("view2d").classList.add("active");document.getElementById("view3d").classList.remove("active");draw();say("2D Plan")};
+document.getElementById("view3d").onclick=()=>{view="3d";document.getElementById("view3d").classList.add("active");document.getElementById("view2d").classList.remove("active");draw();say("3D Concept Preview")};
+
+function download(blob,name){
+ const u=URL.createObjectURL(blob),a=document.createElement("a");
+ a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();
+ setTimeout(()=>URL.revokeObjectURL(u),1500);
+}
+document.getElementById("save").onclick=()=>{
+ download(new Blob([JSON.stringify({app:"Eng CAD Studio",version:2,objects},null,2)],{type:"application/json"}),"eng-cad-v2.json");
+ say("JSON exported");
+};
+document.getElementById("loadbtn").onclick=()=>document.getElementById("file").click();
+document.getElementById("file").onchange=async e=>{
+ const f=e.target.files[0];if(!f)return;
+ try{
+   const d=JSON.parse(await f.text()),arr=Array.isArray(d)?d:d.objects;
+   if(!Array.isArray(arr)||!arr.every(o=>o&&["wall","line","rect","circle","door","window","dimension","label"].includes(o.type)))throw Error();
+   hist();objects=arr;selected=-1;draw();say("JSON opened");
+ }catch(err){alert("Invalid or unsupported JSON file")}
+ e.target.value="";
+};
+document.getElementById("png").onclick=()=>{
+ // Export current view, including 3D preview if selected.
+ const r=cv.getBoundingClientRect(),out=document.createElement("canvas");
+ out.width=Math.round(r.width*2);out.height=Math.round(r.height*2);
+ const oc=out.getContext("2d");
+ oc.drawImage(cv,0,0,cv.width,cv.height,0,0,out.width,out.height);
+ out.toBlob(b=>{if(b)download(b,"eng-cad-preview.png")},"image/png");
+ say("PNG export");
+};
+document.addEventListener("keydown",e=>{
+ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"){e.preventDefault();undo()}
+ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="y"){e.preventDefault();redo()}
+ if(e.key==="Delete"||e.key==="Backspace")document.getElementById("del").click();
+});
+resize();
+})();
+</script>
+</body>
+</html>
