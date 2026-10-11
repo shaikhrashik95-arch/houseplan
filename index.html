@@ -145,106 +145,67 @@
         }
         drawGrid();
 
-        // Mouse & Touch Actions
-        canvas.addEventListener('mousedown', (e) => {
-            isDrawing = true;
-            startX = e.clientX;
-            startY = e.clientY - 110;
-            if (currentTool === 'pen') {
-                ctx.beginPath();
-                ctx.moveTo(startX, startY);
-            }
-        });
+canvas.style.touchAction = 'none';
 
-        canvas.addEventListener('mousemove', (e) => {
-            if (!isDrawing) return;
-            const currentY = e.clientY - 110;
-            const color = document.getElementById('colorPicker').value;
-            
-            if (currentTool === 'pen') {
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 3;
-                ctx.lineTo(e.clientX, currentY);
-                ctx.stroke();
-            }
-        });
+function getPoint(e) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: (e.clientX - rect.left) * canvas.width / rect.width,
+        y: (e.clientY - rect.top) * canvas.height / rect.height
+    };
+}
 
-        canvas.addEventListener('mouseup', (e) => {
-            if (!isDrawing) return;
-            isDrawing = false;
-            const currentY = e.clientY - 110;
-            const color = document.getElementById('colorPicker').value;
-            ctx.strokeStyle = color;
-            ctx.fillStyle = color;
+canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    const p = getPoint(e);
+    startX = p.x;
+    startY = p.y;
+    isDrawing = true;
 
-            if (currentTool === 'wall') {
-                // দেওয়াল (Wall Line)
-                ctx.lineWidth = 6;
-                ctx.beginPath();
-                ctx.moveTo(startX, startY);
-                ctx.lineTo(e.clientX, currentY);
-                ctx.stroke();
-            } else if (currentTool === 'roof') {
-                // ছাদ (Roof Triangle/Outline)
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.moveTo(startX, startY + 30);
-                ctx.lineTo(startX + (e.clientX - startX) / 2, startY - 20);
-                ctx.lineTo(e.clientX, startY + 30);
-                ctx.closePath();
-                ctx.stroke();
-            } else if (currentTool === 'box3d') {
-                // ৩D রুম বা বক্স
-                ctx.lineWidth = 2;
-                let width = e.clientX - startX;
-                let height = currentY - startY;
-                ctx.strokeRect(startX, startY, width, height);
-                ctx.beginPath();
-                ctx.moveTo(startX, startY);
-                ctx.lineTo(startX + 25, startY - 25);
-                ctx.lineTo(startX + width + 25, startY - 25);
-                ctx.lineTo(startX + width, startY);
-                ctx.moveTo(startX + width + 25, startY - 25);
-                ctx.lineTo(startX + width + 25, startY + height - 25);
-                ctx.lineTo(startX + width, startY + height);
-                ctx.stroke();
-            } else if (currentTool === 'window') {
-                // দরজা/জানালা (Window Box)
-                ctx.lineWidth = 2;
-                ctx.strokeRect(startX, startY, 40, 15);
-            } else if (currentTool === 'switch') {
-                // ইলেকট্রিক্যাল সুইচ/সকেট সিম্বল
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.arc(e.clientX, currentY, 12, 0, 2 * Math.PI);
-                ctx.stroke();
-            } else if (currentTool === 'light') {
-                // লাইট পয়েন্ট সিম্বল
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.arc(e.clientX, currentY, 14, 0, 2 * Math.PI);
-                ctx.stroke();
-                ctx.fillText("💡", e.clientX - 6, currentY + 4);
-            } else if (currentTool === 'db') {
-                // ডিস্ট্রিবিউশন বোর্ড (DB Box)
-                ctx.lineWidth = 2;
-                ctx.strokeRect(e.clientX - 15, currentY - 20, 30, 40);
-            } else if (currentTool === 'pipe') {
-                // প্লাম্বিং পাইপ লাইন (Blue/Cyan color)
-                ctx.strokeStyle = '#00bcd4';
-                ctx.lineWidth = 4;
-                ctx.beginPath();
-                ctx.moveTo(startX, startY);
-                ctx.lineTo(e.clientX, currentY);
-                ctx.stroke();
-            } else if (currentTool === 'tap') {
-                // ট্যাপ/বেসিন সিম্বল
-                ctx.fillStyle = '#00bcd4';
-                ctx.beginPath();
-                ctx.arc(e.clientX, currentY, 8, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-        });
+    if (currentTool === 'pen') {
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+    }
+});
+
+canvas.addEventListener('pointermove', (e) => {
+    if (!isDrawing) return;
+    e.preventDefault();
+
+    const p = getPoint(e);
+    const color = document.getElementById('colorPicker').value;
+
+    if (currentTool === 'pen') {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+    }
+});
+
+function finishDrawing(e) {
+    if (!isDrawing) return;
+    const p = getPoint(e);
+    isDrawing = false;
+
+    if (currentTool === 'wall') {
+        ctx.strokeStyle = document.getElementById('colorPicker').value;
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+    }
+}
+
+canvas.addEventListener('pointerup', finishDrawing);
+canvas.addEventListener('pointercancel', () => {
+    isDrawing = false;
+});
+        
+        
 
         // Window resize handle
         window.addEventListener('resize', () => {
