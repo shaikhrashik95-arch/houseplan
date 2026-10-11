@@ -1,0 +1,334 @@
+
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Eng. CAD Studio</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#151c28;color:white;font-family:Arial,sans-serif}
+header{padding:13px;text-align:center;background:#223146}
+h2{margin:0;color:#59d8ff}
+small{color:#c7d8e9}
+nav,.bar{display:flex;gap:6px;flex-wrap:wrap;padding:8px;background:#26364b}
+button{background:#3b526c;color:white;border:1px solid #647b94;border-radius:6px;padding:10px 8px}
+button.active{background:#008bbd}
+.tools{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:7px}
+.tools button{padding:11px 2px}
+.panel{padding:8px;background:#26364b;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px}
+input,select{width:78px;max-width:100%;background:#111c2b;color:white;border:1px solid #71849b;border-radius:4px;padding:6px}
+#canvas{display:block;width:100%;height:100%;touch-action:none}
+#stage{height:46vh;min-height:300px;background:#e9eef3;position:relative;overflow:hidden;touch-action:none}
+#hint{position:absolute;bottom:6px;left:6px;background:#172638e8;padding:7px;font-size:11px;border-radius:4px;pointer-events:none}
+#props{padding:8px;background:#1e2d40;display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:12px}
+#props label{display:flex;gap:3px;align-items:center}
+#props input{width:70px}
+.status{padding:7px;background:#26364b;color:#bde8f6;font-size:12px}
+#file{display:none}
+</style>
+</head>
+<body>
+<header>
+<h2>Eng. CAD Studio</h2>
+<small>2D Floor Plan • 3D House • Design Tools</small>
+</header>
+
+<nav>
+<button id="v2" class="active" onclick="setView('2d')">2D Plan</button>
+<button id="v3" onclick="setView('3d')">3D House</button>
+<button onclick="undo()">↶ Undo</button>
+<button onclick="redo()">↷ Redo</button>
+<button onclick="zoomBy(1.2)">＋</button>
+<button onclick="zoomBy(.83)">－</button>
+<button onclick="fitPlan()">Fit</button>
+</nav>
+
+<div class="tools">
+<button class="active" data-tool="select">↖ Select/Move</button>
+<button data-tool="wall">▰ Wall</button>
+<button data-tool="room">▢ Room</button>
+<button data-tool="door">🚪 Door</button>
+<button data-tool="window">▤ Window</button>
+<button data-tool="bed">🛏 Bed</button>
+<button data-tool="sofa">🛋 Sofa</button>
+<button data-tool="table">▦ Table</button>
+<button data-tool="light">💡 Light</button>
+<button data-tool="switch">◉ Switch</button>
+<button data-tool="pipe">〰 Pipe</button>
+<button data-tool="stair">▥ Staircase</button>
+</div>
+
+<div class="panel">
+<label>Wall <input type="color" id="wc" value="#35465b"></label>
+<label>Floor <input type="color" id="fc" value="#e3d6b8"></label>
+<label>Height m <input type="number" id="wh" value="3" min="1" max="10" step=".5"></label>
+<label>Thickness m <input type="number" id="wt" value=".2" min=".1" max="1" step=".1"></label>
+<label>Pixels/m <input type="number" id="ppm" value="50" min="10" max="150" step="5"></label>
+<button onclick="deleteSelected()">Delete</button>
+<button onclick="newPlan()">New Plan</button>
+</div>
+
+<div id="props"><b>Properties:</b><span id="propText">Select an object to edit it.</span></div>
+<div id="stage">
+<canvas id="canvas"></canvas>
+<div id="hint">Wall/Room: আঙুল টেনে আঁকুন। অন্য টুল: ট্যাপ করুন। Select: সরান।</div>
+</div>
+<div class="status" id="status">Ready</div>
+<div class="bar">
+<button onclick="saveProject()">Save JSON</button>
+<button onclick="document.getElementById('file').click()">Open JSON</button>
+<input id="file" type="file" accept=".json">
+<button onclick="exportPNG()">Export PNG</button>
+<button onclick="window.print()">Print / PDF</button>
+<button onclick="help()">Help</button>
+</div>
+
+<script>
+const c=document.getElementById('canvas'),g=c.getContext('2d');
+const stage=document.getElementById('stage');
+let items=[],selected=-1,tool='select',view='2d',zoom=1,ox=0,oy=0;
+let drawing=null,drag=null,history=[],future=[],id=1;
+
+const ppm=()=>Math.max(10,+document.getElementById('ppm').value||50);
+const wallColor=()=>document.getElementById('wc').value;
+const floorColor=()=>document.getElementById('fc').value;
+const snap=n=>Math.round(n/10)*10;
+
+function resize(){
+ const r=stage.getBoundingClientRect(),d=window.devicePixelRatio||1;
+ c.width=r.width*d;c.height=r.height*d;g.setTransform(d,0,0,d,0,0);render();
+}
+window.addEventListener('resize',resize);
+
+function saveHistory(){
+ history.push(JSON.stringify(items));
+ if(history.length>50)history.shift();
+ future=[];
+}
+function undo(){
+ if(!history.length)return;
+ future.push(JSON.stringify(items));items=JSON.parse(history.pop());selected=-1;render();
+}
+function redo(){
+ if(!future.length)return;
+ history.push(JSON.stringify(items));items=JSON.parse(future.pop());selected=-1;render();
+}
+function setView(v){
+ view=v;
+ document.getElementById('v2').classList.toggle('active',v==='2d');
+ document.getElementById('v3').classList.toggle('active',v==='3d');
+ render();
+}
+function zoomBy(v){zoom=Math.max(.2,Math.min(5,zoom*v));render()}
+function fitPlan(){
+ if(!items.length){zoom=1;ox=oy=0;render();return}
+ let xs=[],ys=[];
+ items.forEach(o=>{
+  xs.push(o.x,o.x2??o.x,o.x+(o.w||0));
+  ys.push(o.y,o.y2??o.y,o.y+(o.h||0));
+ });
+ let a=Math.min(...xs),b=Math.max(...xs),d=Math.min(...ys),e=Math.max(...ys);
+ zoom=Math.min((stage.clientWidth-50)/Math.max(100,b-a),(stage.clientHeight-50)/Math.max(100,e-d),1.5);
+ ox=stage.clientWidth/2-(a+b)/2*zoom;
+ oy=stage.clientHeight/2-(d+e)/2*zoom;render();
+}
+function setTool(t){
+ tool=t;
+ document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));
+}
+document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+
+function pos(e){let r=c.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}}
+function world(p){return{x:(p.x-ox)/zoom,y:(p.y-oy)/zoom}}
+
+function create(t,a,b){
+ let o={id:id++,type:t,x:a.x,y:a.y,rotation:0};
+ if(t==='wall'){o.x2=b.x;o.y2=b.y;o.thickness=+document.getElementById('wt').value||.2}
+ else if(t==='room'){o.x=Math.min(a.x,b.x);o.y=Math.min(a.y,b.y);o.w=Math.max(20,Math.abs(b.x-a.x));o.h=Math.max(20,Math.abs(b.y-a.y))}
+ else{
+  let sz={door:[45,12],window:[60,12],bed:[75,100],sofa:[85,45],table:[55,40],light:[18,18],switch:[12,12],pipe:[70,8],stair:[60,80]}[t]||[40,40];
+  o.w=sz[0];o.h=sz[1];
+ }
+ return o;
+}
+function hit(o,p){
+ if(o.type==='wall'){
+  let dx=o.x2-o.x,dy=o.y2-o.y,l=dx*dx+dy*dy||1;
+  let t=Math.max(0,Math.min(1,((p.x-o.x)*dx+(p.y-o.y)*dy)/l));
+  return Math.hypot(p.x-o.x-t*dx,p.y-o.y-t*dy)<14;
+ }
+ return p.x>=o.x-6&&p.x<=o.x+(o.w||0)+6&&p.y>=o.y-6&&p.y<=o.y+(o.h||0)+6;
+}
+
+c.addEventListener('pointerdown',e=>{
+ if(view!=='2d')return;
+ e.preventDefault();c.setPointerCapture(e.pointerId);
+ let p=world(pos(e));
+ if(tool==='select'){
+  selected=-1;
+  for(let i=items.length-1;i>=0;i--)if(hit(items[i],p)){selected=i;break}
+  if(selected>=0){saveHistory();drag={i:selected,x:p.x,y:p.y}}
+  render();return;
+ }
+ if(tool==='wall'||tool==='room'){
+  drawing={a:{x:snap(p.x),y:snap(p.y)},b:{x:snap(p.x),y:snap(p.y)}};
+  render();return;
+ }
+ saveHistory();items.push(create(tool,{x:snap(p.x),y:snap(p.y),},{x:snap(p.x),y:snap(p.y)}));selected=items.length-1;render();
+});
+c.addEventListener('pointermove',e=>{
+ let p=world(pos(e));
+ if(drawing){drawing.b={x:snap(p.x),y:snap(p.y)};render();return}
+ if(drag){
+  let o=items[drag.i],dx=p.x-drag.x,dy=p.y-drag.y;
+  o.x+=dx;o.y+=dy;if(o.type==='wall'){o.x2+=dx;o.y2+=dy}
+  drag.x=p.x;drag.y=p.y;render();
+ }
+});
+c.addEventListener('pointerup',()=>{
+ if(drawing){
+  if(Math.hypot(drawing.b.x-drawing.a.x,drawing.b.y-drawing.a.y)>10){
+   saveHistory();items.push(create(tool,drawing.a,drawing.b));selected=items.length-1;
+  }
+  drawing=null;render();
+ }
+ drag=null;
+});
+
+function deleteSelected(){
+ if(selected<0)return;
+ saveHistory();items.splice(selected,1);selected=-1;render();
+}
+function newPlan(){
+ if(!confirm('সব drawing মুছবেন?'))return;
+ saveHistory();items=[];selected=-1;render();
+}
+function grid(w,h){
+ g.fillStyle='#edf1f5';g.fillRect(0,0,w,h);
+ g.save();g.translate(ox,oy);g.scale(zoom,zoom);g.strokeStyle='#d6dee7';g.lineWidth=1/zoom;
+ for(let x=-2000;x<3000;x+=20){g.beginPath();g.moveTo(x,-2000);g.lineTo(x,3000);g.stroke()}
+ for(let y=-2000;y<3000;y+=20){g.beginPath();g.moveTo(-2000,y);g.lineTo(3000,y);g.stroke()}
+ g.restore();
+}
+function drawItem(o,i){
+ g.save();g.lineWidth=2;g.strokeStyle=i===selected?'#078dcc':wallColor();g.fillStyle=floorColor();
+ if(o.type==='wall'){
+  g.lineWidth=Math.max(3,(o.thickness||.2)*ppm()*.22);
+  g.beginPath();g.moveTo(o.x,o.y);g.lineTo(o.x2,o.y2);g.stroke();
+ }else if(o.type==='room'){
+  g.fillStyle='rgba(210,190,145,.25)';g.fillRect(o.x,o.y,o.w,o.h);g.strokeRect(o.x,o.y,o.w,o.h);
+  g.fillStyle='#26384a';g.font='12px Arial';g.fillText('Room '+(o.w/ppm()).toFixed(1)+' × '+(o.h/ppm()).toFixed(1)+' m',o.x+5,o.y+16);
+ }else{
+  let x=o.x,y=o.y,w=o.w||20,h=o.h||20;
+  let colors={bed:'#d8e5ee',sofa:'#8db7c6',table:'#bd9567',light:'#ffda56',switch:'#e9a2a2',pipe:'#169b79',stair:'#c8d0d9'};
+  if(o.type==='door'){
+   g.strokeStyle='#8c5429';g.lineWidth=4;g.beginPath();g.moveTo(x,y);g.lineTo(x+w,y);g.stroke();
+   g.lineWidth=1;g.beginPath();g.arc(x,y,w,0,Math.PI/2);g.stroke();
+  }else if(o.type==='window'){
+   g.strokeStyle='#138dc1';g.lineWidth=6;g.beginPath();g.moveTo(x,y);g.lineTo(x+w,y);g.stroke();
+  }else{
+   g.fillStyle=colors[o.type]||'#ddd';g.fillRect(x,y,w,h);g.strokeRect(x,y,w,h);
+   if(o.type==='stair')for(let yy=y+10;yy<y+h;yy+=10){g.beginPath();g.moveTo(x,yy);g.lineTo(x+w,yy);g.stroke()}
+  }
+  g.fillStyle='#203247';g.font='10px Arial';g.fillText(o.type.toUpperCase(),x,y-4);
+ }
+ if(i===selected){g.strokeStyle='#078dcc';g.setLineDash([4,4]);g.lineWidth=1;g.strokeRect(o.x-5,o.y-5,(o.type==='wall'?Math.abs(o.x2-o.x):o.w||0)+10,(o.type==='wall'?Math.abs(o.y2-o.y):o.h||0)+10);g.setLineDash([])}
+ g.restore();
+}
+
+function render2D(w,h){
+ grid(w,h);g.save();g.translate(ox,oy);g.scale(zoom,zoom);
+ items.forEach(drawItem);
+ if(drawing){
+  g.strokeStyle='#e34d4d';g.lineWidth=3;g.setLineDash([7,5]);
+  if(tool==='wall'){g.beginPath();g.moveTo(drawing.a.x,drawing.a.y);g.lineTo(drawing.b.x,drawing.b.y);g.stroke()}
+  else g.strokeRect(Math.min(drawing.a.x,drawing.b.x),Math.min(drawing.a.y,drawing.b.y),Math.abs(drawing.b.x-drawing.a.x),Math.abs(drawing.b.y-drawing.a.y));
+  g.setLineDash([]);
+ }
+ g.restore();
+}
+function render3D(w,h){
+ g.fillStyle='#cbd7e3';g.fillRect(0,0,w,h);
+ const sc=Math.min(w/500,h/400)*.8*zoom,baseX=w/2,baseY=h*.73,H=(+document.getElementById('wh').value||3)*ppm()/2;
+ function P(x,y,z){return{x:baseX+(x-y)*sc*.72+ox*.2,y:baseY+(x+y)*sc*.36-z*sc+oy*.2}}
+ function poly(a,color){g.beginPath();a.forEach((v,i)=>{let p=P(...v);i?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y)});g.closePath();g.fillStyle=color;g.fill();g.strokeStyle='#536579';g.lineWidth=1;g.stroke()}
+ let xs=[],ys=[];
+ items.forEach(o=>{xs.push(o.x/2,o.x2!==undefined?o.x2/2:(o.x+(o.w||0))/2);ys.push(o.y/2,o.y2!==undefined?o.y2/2:(o.y+(o.h||0))/2)});
+ if(!xs.length){xs=[-50,250];ys=[-50,200]}
+ let x1=Math.min(...xs)-20,x2=Math.max(...xs)+20,y1=Math.min(...ys)-20,y2=Math.max(...ys)+20;
+ poly([[x1,y1,0],[x2,y1,0],[x2,y2,0],[x1,y2,0]],floorColor());
+ items.filter(o=>o.type==='room').forEach(o=>poly([[o.x/2,o.y/2,1],[(o.x+o.w)/2,o.y/2,1],[(o.x+o.w)/2,(o.y+o.h)/2,1],[o.x/2,(o.y+o.h)/2,1]],'#e6d9bd'));
+ items.filter(o=>o.type==='wall').forEach(o=>{
+  let a=o.x/2,b=o.y/2,cx=o.x2/2,cy=o.y2/2,t=(o.thickness||.2)*ppm()/8;
+  poly([[a,b,0],[cx,cy,0],[cx,cy,H],[a,b,H]],wallColor());
+  poly([[a,b,H],[cx,cy,H],[cx+t,cy+t,H],[a+t,b+t,H]],'#8797a8');
+ });
+ items.filter(o=>!['wall','room'].includes(o.type)).forEach(o=>{
+  let a=o.x/2,b=o.y/2,cx=(o.x+(o.w||20))/2,cy=(o.y+(o.h||20))/2;
+  let color={bed:'#a9c9df',sofa:'#6598a9',table:'#b88c5b',pipe:'#168f78',light:'#ffcf42',stair:'#aeb9c4'}[o.type]||'#bdc7d0';
+  poly([[a,b,4],[cx,b,4],[cx,cy,4],[a,cy,4]],color);
+  poly([[a,b,4],[cx,b,4],[cx,b,12],[a,b,12]],color);
+ });
+ g.fillStyle='#1e2d3d';g.font='bold 14px Arial';g.fillText('3D HOUSE PREVIEW',10,20);
+ g.font='11px Arial';g.fillText('Height: '+document.getElementById('wh').value+' m • Objects: '+items.length,10,38);
+}
+function updateProps(){
+ let box=document.getElementById('props');box.innerHTML='<b>Properties:</b>';
+ if(selected<0||!items[selected]){box.insertAdjacentText('beforeend',' Select an object to edit it.');return}
+ let o=items[selected];
+ function field(label,key,scale=1){
+  let l=document.createElement('label');l.textContent=label;
+  let n=document.createElement('input');n.type='number';n.step='.1';n.value=(o[key]/scale).toFixed(2);
+  n.onchange=()=>{saveHistory();o[key]=Number(n.value)*scale;render()};
+  l.appendChild(n);box.appendChild(l);
+ }
+ box.insertAdjacentText('beforeend',' '+o.type.toUpperCase()+' #'+o.id+' ');
+ field('X m','x',ppm());field('Y m','y',ppm());
+ if(o.type==='wall'){field('End X m','x2',ppm());field('End Y m','y2',ppm())}
+ else if(o.w!==undefined){field('Width m','w',ppm());field('Height m','h',ppm())}
+ let l=document.createElement('label');l.textContent='Rotation';
+ let s=document.createElement('select');
+ [0,90,180,270].forEach(v=>{let op=document.createElement('option');op.value=v;op.textContent=v+'°';s.appendChild(op)});
+ s.value=o.rotation||0;s.onchange=()=>{saveHistory();o.rotation=+s.value;render()};
+ l.appendChild(s);box.appendChild(l);
+}
+function render(){
+ let w=stage.clientWidth,h=stage.clientHeight;if(!w||!h)return;
+ view==='2d'?render2D(w,h):render3D(w,h);
+ updateProps();
+ document.getElementById('status').textContent=(view==='2d'?'2D Plan':'3D Preview')+' • Objects: '+items.length+(selected>=0?' • '+items[selected].type:'');
+}
+function download(name,data,type){
+ let u=URL.createObjectURL(new Blob([data],{type})),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1200);
+}
+function saveProject(){
+ download('eng-cad-studio-project.json',JSON.stringify({app:'Eng. CAD Studio',version:2,items,id,wc:wallColor(),fc:floorColor(),wh:document.getElementById('wh').value,wt:document.getElementById('wt').value,ppm:ppm()},null,2),'application/json');
+}
+document.getElementById('file').onchange=async e=>{
+ let f=e.target.files[0];if(!f)return;
+ try{
+  let d=JSON.parse(await f.text()),arr=d.items||d.objects;
+  if(!Array.isArray(arr))throw Error();
+  saveHistory();items=arr;id=d.id||d.nextId||items.length+1;selected=-1;
+  if(d.wc||d.wallColor)document.getElementById('wc').value=d.wc||d.wallColor;
+  if(d.fc||d.floorColor)document.getElementById('fc').value=d.fc||d.floorColor;
+  if(d.wh||d.wallHeight)document.getElementById('wh').value=d.wh||d.wallHeight;
+  if(d.wt||d.wallThick)document.getElementById('wt').value=d.wt||d.wallThick;
+  if(d.ppm||d.scalePM)document.getElementById('ppm').value=d.ppm||d.scalePM;
+  setView('2d');fitPlan();
+ }catch(err){alert('JSON ফাইলটি খোলা যায়নি।')}
+ e.target.value='';
+};
+function exportPNG(){
+ let old=view;setView('2d');let a=document.createElement('a');a.download='eng-cad-floor-plan.png';a.href=c.toDataURL('image/png');a.click();setView(old);
+}
+function help(){alert('Wall/Room: টেনে আঁকুন। Select: বস্তু নির্বাচন ও সরান। Properties-এ X/Y/Width/Height পরিবর্তন করুন। 3D House: preview দেখুন। JSON: project save/open। PNG: 2D ছবি। Print/PDF: browser print menu।')}
+['wc','fc','wh','wt','ppm'].forEach(k=>document.getElementById(k).addEventListener('input',render));
+c.addEventListener('wheel',e=>{if(view!=='2d')return;e.preventDefault();zoomBy(e.deltaY<0?1.1:.9)},{passive:false});
+window.undo=undo;window.redo=redo;window.setView=setView;window.zoomBy=zoomBy;window.fitPlan=fitPlan;
+window.deleteSelected=deleteSelected;window.newPlan=newPlan;window.saveProject=saveProject;window.exportPNG=exportPNG;window.help=help;
+resize();
+</script>
+</body>
+</html>
