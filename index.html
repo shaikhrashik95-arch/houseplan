@@ -1,0 +1,395 @@
+
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eng. CAD Studio</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#061629;color:white;font-family:Arial,sans-serif}
+header{padding:14px;background:#031020;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+header h2{margin:0 auto 0 0;color:#36aaff}
+button,input,select{padding:9px;border:1px solid #285779;border-radius:5px;background:#0b2b48;color:white}
+button{cursor:pointer}
+button.active,button:hover{background:#087cff}
+.toolbar{display:flex;gap:5px;padding:8px;overflow-x:auto;background:#061b30}
+.toolbar button{min-width:65px}
+.layout{display:grid;grid-template-columns:160px 1fr 1fr 230px;gap:7px;padding:7px}
+.panel{background:#09233b;border:1px solid #245071;border-radius:7px;overflow:hidden}
+.panel h3{font-size:15px;padding:10px;margin:0;border-bottom:1px solid #245071}
+.pad{padding:8px}
+.canvasbox{height:520px;position:relative;background:#f4f8fc}
+canvas{width:100%;height:100%;display:block;touch-action:none}
+.field{margin-bottom:9px}
+.field label{display:block;font-size:12px;margin-bottom:4px;color:#b8d5ec}
+.field input,.field select{width:100%}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.library button{width:100%;margin-bottom:5px}
+#message{font-size:12px;color:#a8d8ff;line-height:1.6}
+footer{text-align:center;padding:15px;color:#9bbbd4}
+@media(max-width:900px){.layout{grid-template-columns:1fr 1fr}.library,.settings{grid-column:1/-1}.canvasbox{height:400px}}
+@media(max-width:520px){.layout{grid-template-columns:1fr}.canvasbox{height:380px}.library,.settings{grid-column:auto}}
+</style>
+</head>
+<body>
+<header>
+<h2>⌂ Eng. CAD Studio</h2>
+<button onclick="saveProject()">Save</button>
+<button onclick="document.getElementById('load').click()">Load</button>
+<input id="load" type="file" accept=".json" hidden onchange="loadProject(event)">
+<button onclick="exportPNG()">PNG</button>
+<button onclick="window.print()">PDF / Print</button>
+<button onclick="exportDXF()">DXF</button>
+</header>
+
+<nav class="toolbar" id="toolbar">
+<button data-tool="select" class="active">↖ Select</button>
+<button data-tool="wall">▰ Wall</button>
+<button data-tool="room">□ Room</button>
+<button data-tool="door">▯ Door</button>
+<button data-tool="window">▤ Window</button>
+<button data-tool="furniture">▣ Furniture</button>
+<button data-tool="stairs">▥ Stairs</button>
+<button data-tool="measure">↔ Measure</button>
+<button onclick="cloneItem()">Clone</button>
+<button onclick="mirrorItem()">Mirror</button>
+<button onclick="deleteItem()">Delete</button>
+<button onclick="undo()">Undo</button>
+<button onclick="redo()">Redo</button>
+<button onclick="addFloor()">＋ Floor</button>
+<button onclick="toggle3D()">2D / 3D</button>
+</nav>
+
+<div class="layout">
+<section class="panel library">
+<h3>Modern Design Library</h3>
+<div class="pad">
+<input id="search" placeholder="Search..." style="width:100%">
+<div id="libraryItems" style="margin-top:10px"></div>
+<p id="message">টুল বেছে নিয়ে ড্রয়িং এলাকায় চাপ দিন।</p>
+</div>
+</section>
+
+<section class="panel">
+<h3>2D Drawing — meters</h3>
+<div class="canvasbox" id="planBox">
+<canvas id="plan"></canvas>
+</div>
+</section>
+
+<section class="panel">
+<h3>3D House Preview</h3>
+<div class="canvasbox" id="threeBox" style="background:#102a3b">
+<canvas id="three"></canvas>
+</div>
+</section>
+
+<section class="panel settings">
+<h3>⚙ Item Settings</h3>
+<div class="pad">
+<div class="field">
+<label>Item Type</label>
+<select id="type">
+<option>Wall</option><option>Room</option><option>Door</option>
+<option>Window</option><option>Furniture</option><option>Stairs</option>
+</select>
+</div>
+<div class="two">
+<div class="field"><label>Length (m)</label><input id="length" type="number" step=".1" value="4"></div>
+<div class="field"><label>Width (m)</label><input id="width" type="number" step=".1" value=".15"></div>
+<div class="field"><label>Height (m)</label><input id="height" type="number" step=".1" value="3"></div>
+<div class="field"><label>Thickness (m)</label><input id="thickness" type="number" step=".01" value=".15"></div>
+<div class="field"><label>Position X</label><input id="x" type="number" step=".1" value="1"></div>
+<div class="field"><label>Position Y</label><input id="y" type="number" step=".1" value="1"></div>
+<div class="field"><label>Position Z</label><input id="z" type="number" step=".1" value="0"></div>
+<div class="field"><label>Rotation (°)</label><input id="rotation" type="number" value="0"></div>
+</div>
+<div class="field"><label>Color</label><input id="color" type="color" value="#34495e"></div>
+<div class="field">
+<label>Material</label>
+<select id="material">
+<option>Concrete</option><option>Wood</option><option>Glass</option>
+<option>Marble</option><option>Tile</option><option>Metal</option>
+</select>
+</div>
+<div class="field">
+<label>Door / Window Style</label>
+<select id="style"><option>Single</option><option>Double</option><option>Sliding</option><option>French</option><option>Bay</option></select>
+</div>
+<div class="field">
+<label>Opening Direction</label>
+<select id="opening"><option>Inward</option><option>Outward</option><option>Left</option><option>Right</option><option>Sliding</option></select>
+</div>
+<div class="field">
+<label>Floor Pattern</label>
+<select id="pattern"><option>Plain</option><option>Tile Grid</option><option>Wood Plank</option><option>Marble</option></select>
+</div>
+<div class="field"><label>Tile Size (m)</label><input id="tile" type="number" value=".6" step=".1"></div>
+<div class="field"><label>Layer</label>
+<select id="layer"><option>Architecture</option><option>Doors & Windows</option><option>Furniture</option><option>Electrical</option><option>Plumbing</option><option>Lighting</option></select>
+</div>
+<div class="field"><label>Floor</label><select id="floor" onchange="changeFloor()"></select></div>
+<button style="width:100%" onclick="applySettings()">Apply Settings</button>
+<button style="width:100%;margin-top:6px" onclick="clearFloor()">Clear Floor</button>
+<div id="details" class="field" style="margin-top:12px;font-size:12px;color:#b8d5ec"></div>
+</div>
+</section>
+</div>
+
+<footer>Eng. CAD Studio • 2D Drafting • 3D Preview • Save & Export<br>
+প্রাথমিক সংস্করণ — প্রকৃত DWG ইঞ্জিন অন্তর্ভুক্ত নয়।</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const plan=$('plan'),p=plan.getContext('2d');
+const three=$('three'),v=three.getContext('2d');
+let items=[],selected=null,tool='select';
+let floors=['Ground Floor'],floorIndex=0;
+let history=[],future=[],view3d=false;
+let scale=35,ox=35,oy=35,drag=null;
+
+const library={
+'Doors':['Single Door','Double Door','Sliding Door'],
+'Windows':['Single Window','French Window','Bay Window'],
+'Furniture':['Sofa','Bed','Table','Chair','Cabinet'],
+'Flooring':['Tile Floor','Wood Floor','Marble Floor'],
+'Interior':['Kitchen','Bathroom','Staircase'],
+'Lighting':['Ceiling Light','Wall Light']
+};
+
+function record(){
+ history.push(JSON.stringify({items,floors,floorIndex}));
+ if(history.length>50)history.shift();
+ future=[];
+}
+function restore(s){
+ const d=JSON.parse(s);
+ items=d.items;floors=d.floors;floorIndex=d.floorIndex;
+ selected=null;updateFloors();drawAll();
+}
+function undo(){
+ if(!history.length)return;
+ future.push(JSON.stringify({items,floors,floorIndex}));
+ restore(history.pop());
+}
+function redo(){
+ if(!future.length)return;
+ history.push(JSON.stringify({items,floors,floorIndex}));
+ restore(future.pop());
+}
+function currentItems(){return items.filter(i=>i.floor===floorIndex)}
+function setTool(t){
+ tool=t;
+ document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));
+ $('message').textContent='Selected tool: '+t;
+}
+$('toolbar').addEventListener('click',e=>{
+ const b=e.target.closest('[data-tool]');
+ if(b)setTool(b.dataset.tool);
+});
+function renderLibrary(){
+ const q=$('search').value.toLowerCase();
+ let html='';
+ for(const [cat,names] of Object.entries(library)){
+  const filtered=names.filter(n=>n.toLowerCase().includes(q));
+  if(!filtered.length)continue;
+  html+=`<b>${cat}</b>`;
+  filtered.forEach(n=>html+=`<button onclick="addLibrary('${n}')">${n}</button>`);
+ }
+ $('libraryItems').innerHTML=html;
+}
+$('search').addEventListener('input',renderLibrary);
+
+function newItem(type,x,y,name=type){
+ const colors={Wall:'#34495e',Room:'#d7c7a9',Door:'#98653b',Window:'#58bfea',Furniture:'#b49a79',Stairs:'#8b969f'};
+ return {id:Date.now()+Math.random(),type,name,x,y,length:type==='Wall'?4:type==='Door'?.9:type==='Window'?1.2:2,width:type==='Wall'?.15:type==='Door'?.12:type==='Window'?.12:1,height:type==='Wall'?3:1,thickness:.15,z:0,rotation:0,color:colors[type]||'#b49a79',material:'Concrete',style:'Single',opening:'Inward',pattern:'Plain',tile:.6,layer:type==='Furniture'?'Furniture':'Architecture',floor:floorIndex};
+}
+function addLibrary(name){
+ record();
+ let type=/door/i.test(name)?'Door':/window/i.test(name)?'Window':/stair/i.test(name)?'Stairs':/floor|tile|marble|wood/i.test(name)?'Room':/light/i.test(name)?'Furniture':'Furniture';
+ const o=newItem(type,2,2,name);items.push(o);selected=o.id;fillSettings(o);drawAll();
+}
+function addFloor(){
+ record();floors.push('Floor '+floors.length);floorIndex=floors.length-1;updateFloors();drawAll();
+}
+function updateFloors(){
+ $('floor').innerHTML=floors.map((f,i)=>`<option value="${i}">${f}</option>`).join('');
+ $('floor').value=floorIndex;
+}
+function changeFloor(){floorIndex=Number($('floor').value);selected=null;drawAll()}
+
+function resizeCanvases(){
+ for(const c of [plan,three]){
+  const r=c.parentElement.getBoundingClientRect();
+  c.width=Math.max(1,Math.floor(r.width*devicePixelRatio));
+  c.height=Math.max(1,Math.floor(r.height*devicePixelRatio));
+ }
+ drawAll();
+}
+function drawPlan(){
+ const w=plan.width,h=plan.height;
+ p.clearRect(0,0,w,h);p.fillStyle='#f5f8fb';p.fillRect(0,0,w,h);
+ const s=scale*devicePixelRatio;
+ p.strokeStyle='#dce5ed';p.lineWidth=1;
+ for(let x=0;x<w;x+=s/2){p.beginPath();p.moveTo(x,0);p.lineTo(x,h);p.stroke()}
+ for(let y=0;y<h;y+=s/2){p.beginPath();p.moveTo(0,y);p.lineTo(w,y);p.stroke()}
+ p.save();p.scale(devicePixelRatio,devicePixelRatio);p.translate(ox,oy);p.scale(scale,scale);
+ currentItems().forEach(o=>{
+  p.save();p.translate(o.x,o.y);p.rotate(o.rotation*Math.PI/180);
+  p.fillStyle=o.color;p.strokeStyle=String(o.id)===String(selected)?'#087cff':'#263e50';
+  p.lineWidth=.04;
+  if(o.type==='Wall'){p.fillRect(0,0,o.length,o.width);p.strokeRect(0,0,o.length,o.width)}
+  else if(o.type==='Room'){
+   p.globalAlpha=.3;p.fillRect(0,0,o.length,Math.max(o.width,1));p.globalAlpha=1;
+   p.strokeRect(0,0,o.length,Math.max(o.width,1));
+   if(o.pattern==='Tile Grid'){
+    p.strokeStyle='#9aa7b2';
+    for(let x=.6;x<o.length;x+=o.tile){p.beginPath();p.moveTo(x,0);p.lineTo(x,o.width);p.stroke()}
+    for(let y=.6;y<o.width;y+=o.tile){p.beginPath();p.moveTo(0,y);p.lineTo(o.length,y);p.stroke()}
+   }
+  }else if(o.type==='Door'){
+   p.fillStyle='#fff';p.fillRect(0,-.03,o.length,o.width+.06);
+   p.strokeStyle=o.color;p.beginPath();p.moveTo(0,0);p.lineTo(0,o.length);p.stroke();
+  }else if(o.type==='Window'){
+   p.fillStyle='#b8eaff';p.fillRect(0,0,o.length,Math.max(o.width,.12));p.strokeRect(0,0,o.length,Math.max(o.width,.12));
+  }else{
+   p.fillRect(0,0,o.length,Math.max(o.width,.3));p.strokeRect(0,0,o.length,Math.max(o.width,.3));
+   p.fillStyle='#fff';p.font='.22px Arial';p.fillText(o.name,.05,Math.max(o.width,.3)/2);
+  }
+  p.restore();
+ });
+ p.restore();
+ p.fillStyle='#17364d';p.font=`${13*devicePixelRatio}px Arial`;
+ p.fillText(floors[floorIndex]+' • '+currentItems().length+' items',10*devicePixelRatio,20*devicePixelRatio);
+}
+function draw3D(){
+ const w=three.width,h=three.height;
+ v.clearRect(0,0,w,h);v.fillStyle='#102b3b';v.fillRect(0,0,w,h);
+ v.strokeStyle='#1b4358';
+ for(let x=-h;x<w;x+=30*devicePixelRatio){v.beginPath();v.moveTo(x,0);v.lineTo(x+h,h);v.stroke()}
+ const list=currentItems(),unit=Math.min(w/13,h/11)*devicePixelRatio,cx=w/2,cy=h/2;
+ list.forEach(o=>{
+  const x=o.x,y=o.y,l=o.length,b=Math.max(o.width,.2);
+  const points=[[x,y],[x+l,y],[x+l,y+b],[x,y+b]].map(([a,d])=>[cx+(a-d)*unit*.65,cy+(a+d)*unit*.32]);
+  const ht=Math.max(4,(o.height||1)*unit*.45);
+  v.beginPath();points.forEach((pt,i)=>i?v.lineTo(pt[0],pt[1]):v.moveTo(pt[0],pt[1]));v.closePath();
+  v.fillStyle=o.color;v.globalAlpha=o.type==='Room'?.35:.9;v.fill();v.globalAlpha=1;
+  v.strokeStyle=String(o.id)===String(selected)?'#00d7ff':'#c8d9e4';v.lineWidth=2;v.stroke();
+  if(['Wall','Door','Window','Furniture','Stairs'].includes(o.type)){
+   v.beginPath();v.moveTo(points[0][0],points[0][1]);v.lineTo(points[0][0],points[0][1]-ht);v.lineTo(points[1][0],points[1][1]-ht);v.lineTo(points[1][0],points[1][1]);v.stroke();
+  }
+ });
+ if(!list.length){v.fillStyle='white';v.font=`${16*devicePixelRatio}px Arial`;v.fillText('Add items to preview',15*devicePixelRatio,40*devicePixelRatio)}
+}
+function drawAll(){updateFloors();drawPlan();draw3D()}
+
+function fillSettings(o){
+ if(!o)return;
+ for(const k of ['type','length','width','height','thickness','x','y','z','rotation','color','material','style','opening','pattern','tile','layer']){
+  if($(k)&&o[k]!==undefined)$(k).value=o[k];
+ }
+ $('details').textContent=`${o.name} • Area ${(o.length*o.width).toFixed(2)} m² • X ${o.x} m, Y ${o.y} m`;
+}
+function applySettings(){
+ const o=items.find(i=>String(i.id)===String(selected));
+ if(!o){alert('প্রথমে একটি আইটেম নির্বাচন করুন।');return}
+ record();
+ for(const k of ['length','width','height','thickness','x','y','z','rotation','tile'])o[k]=Number($(k).value)||0;
+ for(const k of ['type','color','material','style','opening','pattern','layer'])o[k]=$(k).value;
+ o.name=o.name||o.type;drawAll();fillSettings(o);
+}
+function nearest(x,y){
+ return currentItems().slice().reverse().find(o=>x>=o.x-.2&&y>=o.y-.2&&x<=o.x+o.length+.2&&y<=o.y+Math.max(o.width,.3)+.2);
+}
+function pos(e){
+ const r=plan.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top};
+}
+plan.addEventListener('pointerdown',e=>{
+ const q=pos(e),x=(q.x-ox)/scale,y=(q.y-oy)/scale;
+ if(['wall','room','door','window','furniture','stairs'].includes(tool)){
+  record();
+  const type={wall:'Wall',room:'Room',door:'Door',window:'Window',furniture:'Furniture',stairs:'Stairs'}[tool];
+  const o=newItem(type,x,y);items.push(o);selected=o.id;fillSettings(o);drawAll();return;
+ }
+ const o=nearest(x,y);
+ if(o){
+  selected=o.id;fillSettings(o);
+  if(tool==='select'){record();drag={id:o.id,x,y,ox:o.x,oy:o.y};plan.setPointerCapture(e.pointerId)}
+ }else if(tool==='measure'){
+  $('details').textContent=`Measurement: X ${x.toFixed(2)} m, Y ${y.toFixed(2)} m`;
+ }else selected=null;
+ drawAll();
+});
+plan.addEventListener('pointermove',e=>{
+ if(!drag)return;
+ const q=pos(e),x=(q.x-ox)/scale,y=(q.y-oy)/scale;
+ const o=items.find(i=>i.id===drag.id);if(!o)return;
+ o.x=drag.ox+x-drag.x;o.y=drag.oy+y-drag.y;drawAll();
+});
+plan.addEventListener('pointerup',()=>drag=null);
+
+function cloneItem(){
+ const o=items.find(i=>String(i.id)===String(selected));if(!o)return;
+ record();const n={...o,id:Date.now()+Math.random(),x:o.x+.4,y:o.y+.4};items.push(n);selected=n.id;fillSettings(n);drawAll();
+}
+function mirrorItem(){
+ const o=items.find(i=>String(i.id)===String(selected));if(!o)return;
+ record();o.rotation=(180-o.rotation+360)%360;drawAll();fillSettings(o);
+}
+function deleteItem(){
+ if(selected===null)return;
+ record();items=items.filter(i=>String(i.id)!==String(selected));selected=null;drawAll();
+}
+function clearFloor(){
+ if(!confirm('এই Floor-এর সব item মুছবেন?'))return;
+ record();items=items.filter(i=>i.floor!==floorIndex);selected=null;drawAll();
+}
+function toggle3D(){
+ view3d=!view3d;
+ $('planBox').style.display=view3d?'none':'block';
+ $('threeBox').style.display=view3d?'block':'block';
+ resizeCanvases();
+}
+function saveProject(){
+ const data=JSON.stringify({items,floors,floorIndex});
+ localStorage.setItem('engCadStudioProject',data);
+ alert('এই browser-এ Project save হয়েছে। আলাদা ফাইল পেতে Project JSON export ব্যবহার করুন।');
+}
+function exportJSON(){
+ const blob=new Blob([JSON.stringify({items,floors,floorIndex},null,2)],{type:'application/json'});
+ download(blob,'eng-cad-project.json');
+}
+function loadProject(e){
+ const f=e.target.files[0];if(!f)return;
+ const r=new FileReader();
+ r.onload=()=>{try{restore(r.result);localStorage.setItem('engCadStudioProject',r.result)}catch(err){alert('সঠিক Project JSON ফাইল নয়।')}};
+ r.readAsText(f);e.target.value='';
+}
+function exportPNG(){
+ const a=document.createElement('a');a.download='eng-cad-plan.png';a.href=plan.toDataURL('image/png');a.click();
+}
+function exportDXF(){
+ let s=['0','SECTION','2','ENTITIES'];
+ currentItems().forEach(o=>{
+  const pts=[[o.x,o.y],[o.x+o.length,o.y],[o.x+o.length,o.y+o.width],[o.x,o.y+o.width],[o.x,o.y]];
+  for(let i=0;i<4;i++)s.push('0','LINE','8',o.layer||'0','10',pts[i][0],'20',pts[i][1],'30','0','11',pts[i+1][0],'21',pts[i+1][1],'31','0');
+ });
+ s.push('0','ENDSEC','0','EOF');
+ download(new Blob([s.join('\n')],{type:'application/dxf'}),'eng-cad-plan.dxf');
+}
+function download(blob,name){
+ const url=URL.createObjectURL(blob),a=document.createElement('a');
+ a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+window.addEventListener('resize',resizeCanvases);
+renderLibrary();
+updateFloors();
+try{
+ const old=localStorage.getItem('engCadStudioProject');
+ if(old)restore(old);
+}catch(e){}
+setTimeout(resizeCanvases,100);
+</script>
+</body>
+</html>
